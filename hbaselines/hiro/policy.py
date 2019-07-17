@@ -682,6 +682,34 @@ class FeedForwardPolicy(ActorCriticPolicy):
         obs0, actions, rewards, obs1, terminals1 = self.replay_buffer.sample(
             batch_size=self.batch_size)
 
+        self.update_from_batch(obs0, actions, rewards, obs1, terminals1)
+
+    def update_from_batch(self, obs0, actions, rewards, obs1, terminals1):
+        """Perform gradient update step given a batch of data.
+
+        Parameters
+        ----------
+        obs0 : np.ndarray
+            batch of observations
+        actions : numpy float
+            batch of actions executed given obs_batch
+        rewards : numpy float
+            rewards received as results of executing act_batch
+        obs1 : np.ndarray
+            next set of observations seen after executing act_batch
+        terminals1 : numpy bool
+            done_mask[i] = 1 if executing act_batch[i] resulted in the end of
+            an episode and 0 otherwise.
+
+        Returns
+        -------
+        float
+            critic loss
+        float
+            actor loss
+        dict
+            feed_dict map for the summary (to be run in the algorithm)
+        """
         # Reshape to match previous behavior and placeholder shape.
         rewards = rewards.reshape(-1, 1)
         terminals1 = terminals1.reshape(-1, 1)
@@ -901,9 +929,18 @@ class HIROPolicy(ActorCriticPolicy):
         the manager policy
     meta_period : int
         manger action period
+    relative_goals : bool
+        specifies whether the goal issued by the Manager is meant to be a
+        relative or absolute goal, i.e. specific state or change in state
     off_policy_corrections : bool
         whether to use off-policy corrections during the update procedure. See:
         https://arxiv.org/abs/1805.08296.
+    use_fingerprints : bool
+        specifies whether to add a time-dependent fingerprint to the
+        observations
+    centralized_value_functions : bool
+        specifies whether to use centralized value functions for the Manager
+        and Worker critic functions
     connected_gradients : bool
         whether to connect the graph between the manager and worker
     prev_meta_obs : array_like
@@ -944,7 +981,10 @@ class HIROPolicy(ActorCriticPolicy):
                  layers=None,
                  act_fun=tf.nn.relu,
                  meta_period=10,
+                 relative_goals=False,
                  off_policy_corrections=False,
+                 use_fingerprints=False,
+                 centralized_value_functions=False,
                  connected_gradients=False):
         """Instantiate the HIRO policy.
 
@@ -996,9 +1036,18 @@ class HIROPolicy(ActorCriticPolicy):
             the activation function to use in the neural network
         meta_period : int, optional
             manger action period. Defaults to 10.
+        relative_goals : bool, optional
+            specifies whether the goal issued by the Manager is meant to be a
+            relative or absolute goal, i.e. specific state or change in state
         off_policy_corrections : bool, optional
             whether to use off-policy corrections during the update procedure.
             See: https://arxiv.org/abs/1805.08296. Defaults to False.
+        use_fingerprints : bool, optional
+            specifies whether to add a time-dependent fingerprint to the
+            observations
+        centralized_value_functions : bool, optional
+            specifies whether to use centralized value functions for the
+            Manager and Worker critic functions
         connected_gradients : bool, optional
             whether to connect the graph between the manager and worker.
             Defaults to False.
@@ -1011,7 +1060,10 @@ class HIROPolicy(ActorCriticPolicy):
         super(HIROPolicy, self).__init__(sess, ob_space, ac_space, co_space)
 
         self.meta_period = meta_period
+        self.relative_goals = relative_goals
         self.off_policy_corrections = off_policy_corrections
+        self.use_fingerprints = use_fingerprints
+        self.centralized_value_functions = centralized_value_functions
         self.connected_gradients = connected_gradients
         self.replay_buffer = ReplayBuffer(buffer_size)
 
@@ -1184,15 +1236,30 @@ class HIROPolicy(ActorCriticPolicy):
         if self.off_policy_corrections:
             # Replace the goals with the most likely goals.
             goals = self._sample_best_meta_action(
-                states=None,
-                next_states=None,
-                prev_meta_actions=None,
-                low_states=None,
-                low_actions=None
+                states=None,  # FIXME
+                next_states=None,  # FIXME
+                prev_meta_actions=None,  # FIXME
+                low_states=None,  # FIXME
+                low_actions=None  # FIXME
             )
 
-            # FIXME: add updates
-            pass
+            self.manager.update_from_batch(
+                obs0=None,  # FIXME
+                actions=None,  # FIXME
+                rewards=None,  # FIXME
+                obs1=None,  # FIXME
+                terminals1=None  # FIXME
+            )
+
+            self.worker.update_from_batch(
+                obs0=None,  # FIXME
+                actions=None,  # FIXME
+                rewards=None,  # FIXME
+                obs1=None,  # FIXME
+                terminals1=None  # FIXME
+            )
+
+            return 0, 0, {}  # FIXME
 
         else:
             # Update the Managers and workers regularly.
