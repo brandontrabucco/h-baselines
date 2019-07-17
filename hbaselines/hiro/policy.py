@@ -185,7 +185,7 @@ class FeedForwardPolicy(ActorCriticPolicy):
     replay_buffer : hbaselines.hiro.replay_buffer.ReplayBuffer
         the replay buffer
     critic_target : tf.placeholder
-        TODO
+        a placeholder for the current-step estimate of the target Q values
     terminals1 : tf.placeholder
         placeholder for the next step terminals
     rew_ph : tf.placeholder
@@ -196,10 +196,10 @@ class FeedForwardPolicy(ActorCriticPolicy):
         placeholder for the observations
     obs1_ph : tf.placeholder
         placeholder for the next step observations
-    obs_rms : TODO
+    obs_rms : stable_baselines.common.mpi_running_mean_std.RunningMeanStd
         an object that computes the running mean and standard deviations for
         the observations
-    ret_rms : TODO
+    ret_rms : stable_baselines.common.mpi_running_mean_std.RunningMeanStd
         an object that computes the running mean and standard deviations for
         the rewards
     actor_tf : tf.Variable
@@ -215,7 +215,8 @@ class FeedForwardPolicy(ActorCriticPolicy):
         de-normalized output from the critic with the action provided directly
         by the actor policy
     target_q : tf.Variable
-        TODO
+        the Q-value as estimated by the current reward and next step estimate
+        by the target Q-value
     target_init_updates : tf.Operation
         an operation that sets the values of the trainable parameters of the
         target actor/critic to match those actual actor/critic
@@ -263,8 +264,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
                  act_fun=tf.nn.relu,
                  scope=None):
         """Instantiate the feed-forward neural network policy.
-
-        TODO: describe the scope and the summary.
 
         Parameters
         ----------
@@ -454,7 +453,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
             tf.summary.scalar('critic_target',
                               tf.reduce_mean(self.critic_target))
 
-        # TODO: do I need indent?
         # Create the target update operations.
         model_scope = 'model/'
         target_scope = 'target/'
@@ -569,10 +567,7 @@ class FeedForwardPolicy(ActorCriticPolicy):
             var_list=tf_util.get_trainable_vars(scope_name),
             beta1=0.9, beta2=0.999, epsilon=1e-08)
 
-    def _make_actor(self,
-                    obs=None,
-                    reuse=False,
-                    scope="pi"):
+    def _make_actor(self, obs=None, reuse=False, scope="pi"):
         """Create an actor tensor.
 
         Parameters
@@ -695,8 +690,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
             self.terminals1: terminals1
         })
 
-        # TODO this is the belly of the gradient beast
-        # TODO ---------------------------------------
         # Get all gradients and perform a synced update.
         ops = [self.actor_grads, self.actor_loss, self.critic_grads,
                self.critic_loss]
@@ -706,7 +699,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
             self.rew_ph: rewards,
             self.critic_target: target_q,
         }
-        # TODO ---------------------------------------
 
         actor_grads, actor_loss, critic_grads, critic_loss = self.sess.run(
             ops, td_map)
@@ -724,7 +716,7 @@ class FeedForwardPolicy(ActorCriticPolicy):
     def get_action(self, obs, **kwargs):
         """See parent class."""
         # Add the contextual observation, if applicable.
-        context_obs = kwargs.get("context_obs")  # goals specified by Manager
+        context_obs = kwargs.get("context_obs")
         if context_obs is not None:
             obs = np.concatenate((obs, context_obs), axis=1)
 
@@ -843,6 +835,7 @@ class FeedForwardPolicy(ActorCriticPolicy):
 
         return stats
 
+    # TODO: delete all?
     def get_target_q(self):
         return self.target_q
 
@@ -895,9 +888,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
         return self.actor_tf
 
 
-# TODO start of HIRO policy
-
-
 class HIROPolicy(ActorCriticPolicy):
     """Hierarchical reinforcement learning with off-policy correction.
 
@@ -909,6 +899,11 @@ class HIROPolicy(ActorCriticPolicy):
         the manager policy
     meta_period : int
         manger action period
+    off_policy_corrections : bool
+        whether to use off-policy corrections during the update procedure. See:
+        https://arxiv.org/abs/1805.08296.
+    connected_gradients : bool
+        whether to connect the graph between the manager and worker
     prev_meta_obs : array_like
         previous observation by the Manager
     prev_meta_action : array_like
@@ -945,7 +940,10 @@ class HIROPolicy(ActorCriticPolicy):
                  layer_norm=False,
                  reuse=False,
                  layers=None,
-                 act_fun=tf.nn.relu):
+                 act_fun=tf.nn.relu,
+                 meta_period=10,
+                 off_policy_corrections=False,
+                 connected_gradients=False):
         """Instantiate the HIRO policy.
 
         Parameters
@@ -994,6 +992,14 @@ class HIROPolicy(ActorCriticPolicy):
             [64, 64])
         act_fun : tf.nn.*
             the activation function to use in the neural network
+        meta_period : int, optional
+            manger action period. Defaults to 10.
+        off_policy_corrections : bool, optional
+            whether to use off-policy corrections during the update procedure.
+            See: https://arxiv.org/abs/1805.08296. Defaults to False.
+        connected_gradients : bool, optional
+            whether to connect the graph between the manager and worker.
+            Defaults to False.
 
         Raises
         ------
@@ -1002,6 +1008,9 @@ class HIROPolicy(ActorCriticPolicy):
         """
         super(HIROPolicy, self).__init__(sess, ob_space, ac_space, co_space)
 
+        self.meta_period = meta_period
+        self.off_policy_corrections = off_policy_corrections
+        self.connected_gradients = connected_gradients
         self.replay_buffer = ReplayBuffer(buffer_size)
 
         # =================================================================== #
@@ -1035,29 +1044,16 @@ class HIROPolicy(ActorCriticPolicy):
                 scope="Manager"
             )
 
-        # manger action period
-        self.meta_period = 10  # FIXME
-
         # previous observation by the Manager
         self.prev_meta_obs = None
 
-        """
-            Use this to store a list of observations
-            that stretch as long as the dilated
-            horizon chosen for the Manager.
-            
-            These observations correspond to the s(t)
-            in the HIRO paper.
-        """
+        # Use this to store a list of observations that stretch as long as the
+        # dilated horizon chosen for the Manager. These observations correspond
+        # to the s(t) in the HIRO paper.
         self._observations = []
 
-        """
-            Use this to store the list of environmental
-            actions that the worker takes.
-            
-            These actions correspond to the a(t)
-            in the HIRO paper.
-        """
+        # Use this to store the list of environmental actions that the worker
+        # takes. These actions correspond to the a(t) in the HIRO paper.
         self._worker_actions = []
 
         # action by the Manager at the previous time step
@@ -1072,11 +1068,8 @@ class HIROPolicy(ActorCriticPolicy):
         self.meta_reward = None
         self.rewards = []
 
-        """
-            The following is redundant but necessary if the
-            changes to the update function are to be in the
-            HIRO policy and not the FeedForward.            
-        """
+        # The following is redundant but necessary if the changes to the update
+        # function are to be in the HIRO policy and not the FeedForward.
         self.batch_size = batch_size
 
         # =================================================================== #
@@ -1122,12 +1115,12 @@ class HIROPolicy(ActorCriticPolicy):
             )[0]
         self.worker_reward = worker_reward
 
-        manager_tf = self.manager.get_actor_tf()
-        worker_obs_ph = self.worker.get_obs_ph()
-
-        obs = tf.concat((worker_obs_ph, manager_tf), axis=1)
-
-        self.worker._make_actor(obs=obs)
+        # FIXME
+        if self.connected_gradients:
+            manager_tf = self.manager.get_actor_tf()
+            worker_obs_ph = self.worker.get_obs_ph()
+            obs = tf.concat((worker_obs_ph, manager_tf), axis=1)
+            self.worker.actor_tf = self.worker._make_actor(obs=obs)
 
     def initialize(self):
         """See parent class.
@@ -1140,55 +1133,72 @@ class HIROPolicy(ActorCriticPolicy):
     # TODO changes to update
     def update(self):
         """See parent class."""
-        # -------------------
-
-        # -------------------
-
         if not self.replay_buffer.can_sample(self.batch_size):
             return 0, 0, {}
 
-        # Get a batch
-        # FIXME use the new sample encoder in replay buffer
-        obs0, actions, rewards, obs1, terminals1 = self.replay_buffer.sample(
-            batch_size=self.batch_size)
+        # Get a batch. FIXME
+        obs0, goals, actions, manager_rewards, worker_rewards, obs1, \
+            terminals1 = self.replay_buffer.sample(batch_size=self.batch_size)
 
-        # Reshape to match previous behavior and placeholder shape.
-        rewards = rewards.reshape(-1, 1)
-        terminals1 = terminals1.reshape(-1, 1)
+        if self.connected_gradients:
+            # Reshape to match previous behavior and placeholder shape.
+            rewards = manager_rewards.reshape(-1, 1)
+            terminals1 = terminals1.reshape(-1, 1)
 
-        target_q = self.sess.run(self.manager.get_target_q(), feed_dict={
-            self.manager.get_obs1_ph(): obs1,
-            self.manager.get_rew_ph(): rewards,
-            self.manager.get_terminals1(): terminals1
-        })
+            target_q = self.sess.run(self.manager.get_target_q(), feed_dict={
+                self.manager.get_obs1_ph(): obs1,
+                self.manager.get_rew_ph(): rewards,
+                self.manager.get_terminals1(): terminals1
+            })
 
-        # TODO this is the belly of the gradient beast
-        # TODO ---------------------------------------
-        # Get all gradients and perform a synced update.
-        ops = [self.worker.get_actor_grads(), self.worker.get_actor_loss(), self.manager.get_critic_grads(),
-               self.manager.get_critic_loss()]
-        td_map = {
-            self.worker.get_obs_ph(): obs0,
-            self.worker.get_action_ph(): actions,
-            self.manager.get_rew_ph(): rewards,
-            self.manager.get_critic_target(): target_q,
-        }
-        # TODO ---------------------------------------
+            # TODO this is the belly of the gradient beast
+            # TODO ---------------------------------------
+            # Get all gradients and perform a synced update.
+            ops = [self.worker.get_actor_grads(),
+                   self.worker.get_actor_loss(),
+                   self.manager.get_critic_grads(),
+                   self.manager.get_critic_loss()]
+            td_map = {
+                self.worker.get_obs_ph(): obs0,
+                self.worker.get_action_ph(): actions,
+                self.manager.get_rew_ph(): rewards,
+                self.manager.get_critic_target(): target_q,
+            }
+            # TODO ---------------------------------------
 
-        actor_grads, actor_loss, critic_grads, critic_loss = self.sess.run(
-            ops, td_map)
+            actor_grads, actor_loss, critic_grads, critic_loss = self.sess.run(
+                ops, td_map)
 
-        self.worker.get_actor_optimizer().update(
-            actor_grads, learning_rate=self.worker.get_actor_lr())
-        self.manager.get_critic_optimizer().update(
-            critic_grads, learning_rate=self.manager.get_critic_lr())
+            self.worker.get_actor_optimizer().update(
+                actor_grads, learning_rate=self.worker.get_actor_lr())
+            self.manager.get_critic_optimizer().update(
+                critic_grads, learning_rate=self.manager.get_critic_lr())
 
-        # Run target soft update operation.
-        self.sess.run(self.manager.get_target_soft_updates())
+            # Run target soft update operation.
+            self.sess.run(self.manager.get_target_soft_updates())
 
-        return critic_loss, actor_loss, td_map
+            return critic_loss, actor_loss, td_map
 
-    def get_action(self, obs, state=None, mask=None, meta_act=None, **kwargs):
+        if self.off_policy_corrections:
+            # Replace the goals with the most likely goals.
+            goals = self._sample_best_meta_action(
+                states=None,
+                next_states=None,
+                prev_meta_actions=None,
+                low_states=None,
+                low_actions=None
+            )
+
+            # FIXME: add updates
+            pass
+
+        else:
+            # Update the Managers and workers regularly.
+            self.manager.update()
+            self.worker.update()
+            return 0, 0, {}  # FIXME
+
+    def get_action(self, obs, state=None, mask=None, **kwargs):
         """See parent class."""
         # Update the meta action, if the time period requires is.
         if kwargs["time"] % self.meta_period == 0:
@@ -1196,10 +1206,7 @@ class HIROPolicy(ActorCriticPolicy):
             self.goals.append(self.meta_action)
 
         # Return the worker action.
-        if meta_act is None:
-            worker_obs = np.concatenate((obs, self.meta_action), axis=1)
-        else:
-            worker_obs = np.concatenate((obs, meta_act), axis=1)
+        worker_obs = np.concatenate((obs, self.meta_action), axis=1)
 
         # compute worker action
         worker_action = self.worker.get_action(worker_obs)
@@ -1210,14 +1217,14 @@ class HIROPolicy(ActorCriticPolicy):
         return worker_action
 
     def _notify_manager(self, action, **kwargs):
-        """
-        Notify the Manager that the Worker produced a new action.
-        These actions are saved in the Manager for future off-
-        policy enhancements.
+        """Notify the Manager that the Worker produced a new action.
+
+        These actions are saved in the Manager for future off-policy
+        enhancements.
 
         Parameters
         ----------
-        action: Any
+        action : array_like
             current action produced by Worker
         """
         if kwargs["time"] % self.meta_period == 0:
@@ -1226,12 +1233,14 @@ class HIROPolicy(ActorCriticPolicy):
             self._worker_actions.append(action)
 
     def _observation_memory(self, obs, **kwargs):
-        """
-        Notify the Manager that there is a new environmental
-        observation. These new observations are saved in the
-        Manager for future off-policy correction.
+        """Notify the Manager that there is a new environmental observation.
 
-        obs: Any
+        These new observations are saved in the Manager for future off-policy
+        correction.
+
+        Parameters
+        ----------
+        obs : array_like
             current environmental observation
         """
         if kwargs["time"] % self.meta_period == 0:
@@ -1293,30 +1302,29 @@ class HIROPolicy(ActorCriticPolicy):
         """See parent class."""
         return {}  # FIXME
 
-    def goal_xsition_model(self,
-                           obs_t,
-                           g_t,
-                           obs_tp1):
-        """
-        Fixed goal transition function defined by the following eqn:
+    @staticmethod
+    def goal_xsition_model(obs_t, g_t, obs_tp1):
+        """Fixed goal transition function.
 
-        h(s_t, g_t, s_t+1) = s_t + g_t - s_t+1
+        Defined by the following equation:
+
+            h(s_t, g_t, s_t+1) = s_t + g_t - s_t+1
 
         Parameters:
         -----------
-        obs_t: Any
+        obs_t : array_like
             environmental observation at time t
-        g_t: Any
+        g_t : array_like
             Worker specified goal at time t
-        obs_tp1: Any
-            environmental observation at time t
+        obs_tp1 : array_like
+            environmental observation at time t+1
 
         Returns
         -------
-        g_tp1: Any
+        array_like
             Worker specified goal at time t+1
         """
-        return tf.subtract(tf.add(obs_t, g_t), obs_tp1)
+        return obs_t + g_t - obs_tp1
 
     def off_policy_correction(self,
                               data,
@@ -1330,24 +1338,43 @@ class HIROPolicy(ActorCriticPolicy):
                               low_state_reprs,
                               tf_spec,
                               k=8):
-        """
-        Function in order to perform our Manager off-
-        policy correction of specified goals.
+        """Perform Manager off-policy correction of specified goals.
 
         Defined by approximately solving the argmax of:
 
-        -0.5 * summation(||a_i - pi(s_i, g_i)|| ** 2 + constant)
+            -0.5 * summation(||a_i - pi(s_i, g_i)|| ** 2 + constant)
 
         over all values of time between (t, t+c-1)
 
         Parameters
         ----------
-        data: tuple
+        data : tuple
             replay buffer data
-        horizon: int
+        horizon : int
             Manager horizon
-        c: int
+        c : int
             constant defined in equation
+        state_reps : FIXME
+            FIXME
+        next_state_reprs : FIXME
+            FIXME
+        prev_meta_actions : FIXME
+            FIXME
+        low_states : FIXME
+            FIXME
+        low_actions : FIXME
+            FIXME
+        low_state_reprs : FIXME
+            FIXME
+        tf_spec : FIXME
+            FIXME
+        k : int, optional
+            FIXME
+
+        Returns
+        -------
+        FIXME
+            FIXME
         """
         # current goal
         goals = [tuple(data.index(3)).index(0)]
@@ -1364,8 +1391,7 @@ class HIROPolicy(ActorCriticPolicy):
         for elem in tmp:
             goals.append(elem)
 
-        # goal based on sampling from a distribution centered
-        # at (s_t+c - s_t)
+        # goal based on sampling from a distribution centered at (s_t+c - s_t)
         goals.append(self.manager.get_action(
             list(data.index(0)).index(-1)) - list(data.index(0)).index(0))  # got my goals
 
@@ -1384,11 +1410,10 @@ class HIROPolicy(ActorCriticPolicy):
         index = 0
 
         for time in range(horizon):
-            tmp_var -= 0.5 * (
-                    self.euclidean_distance(actions.index(time),
-                                            self.worker.get_action(
-                                                obs=states.index(time),
-                                                meta_act=goals.index(time))) ** 2) + c
+            tmp_var -= 0.5 * (self.euclidean_distance(
+                actions.index(time), self.worker.get_action(
+                    obs=states.index(time),
+                    meta_act=goals.index(time))) ** 2) + c
             decision_list.append(dict([(index, tmp_var)]))
             index, tmp_var = index+1, 0
 
@@ -1397,14 +1422,21 @@ class HIROPolicy(ActorCriticPolicy):
 
         return decision  # todo fix this to be a replacement in replay buffer
 
-    def euclidean_distance(self, a, b):
-        """
-        Computes pairwise distances between each elements of A and each elements of B.
-        Args:
-          a,    [m,d] matrix
-          b,    [n,d] matrix
-        Returns:
-          d,    [m,n] matrix of pairwise distances
+    @staticmethod
+    def euclidean_distance(a, b):
+        """Computes pairwise distances between each elements of A and B.
+
+        Parameters
+        ----------
+        a : array_like
+            [m,d] matrix
+        b : array_like
+            [n,d] matrix
+
+        Returns
+        -------
+        array_like
+            [m,n] matrix of pairwise distances
         """
         with tf.variable_scope('pairwise_dist'):
             # squared norms of each row in A and B
@@ -1416,80 +1448,79 @@ class HIROPolicy(ActorCriticPolicy):
             nb = tf.reshape(nb, [1, -1])
 
             # return pairwise euclidean difference matrix
-            d = tf.sqrt(tf.maximum(na - 2 * tf.matmul(a, b, False, True) + nb, 0.0))
+            d = tf.sqrt(
+                tf.maximum(na - 2 * tf.matmul(a, b, False, True) + nb, 0.0))
+
         return d
 
     def _sample_best_meta_action(self,
-                                 state_reps,
-                                 next_state_reprs,
+                                 states,
+                                 next_states,
                                  prev_meta_actions,
                                  low_states,
                                  low_actions,
-                                 low_state_reprs,
-                                 tf_spec,
-                                 k=8):
-        """
-        Return meta-actions which approximately maximize low-level log-probs.
+                                 k=10):
+        """Return meta-actions which approximately maximize low-level log-prob.
 
-        state_reps: Any
-            current Manager state observation
-        next_state_reprs: Any
-            next Manager state observation
-        prev_meta_actions: Any
-            previous meta Manager action
-        low_states: Any
-            current Worker state observation
-        low_actions: Any
-            current Worker environmental action
-        low_state_reprs: Any
-            BLANK
-        k: int
-            number of goals returned
-        """
-        sampled_actions = self._sample(state_reps,
-                                       next_state_reprs,
-                                       k,
-                                       prev_meta_actions,
-                                       tf_spec)
-
-        sampled_actions = tf.stop_gradient(sampled_actions)
-
-        sampled_log_probs = tf.reshape(self._log_probs(
-            tf.tile(low_states, [k, 1, 1]),
-            tf.tile(low_actions, [k, 1, 1]),
-            tf.tile(low_state_reprs, [k, 1, 1]),
-            [tf.reshape(sampled_actions, [-1, sampled_actions.shape[-1]])]),
-            [k, low_states.shape[0],
-             low_states.shape[1], -1])
-
-        fitness = tf.reduce_sum(sampled_log_probs, [2, 3])
-        best_actions = tf.argmax(fitness, 0)
-        actions = tf.gather_nd(
-            sampled_actions,
-            tf.stack([best_actions,
-                      tf.range(prev_meta_actions.shape[0], dtype=tf.int64)], -1))
-        return actions
-
-    # TODO fix me
-    def _log_probs(self,
-                   states,
-                   actions,  # use this as a target value for error
-                   tf_spec,  # use this to define max and min
-                   goals):
-        """
-        Utility function that helps in calculating the
-        log probability of the next goal by the Manager.
-
-        states: Any
-            list of states corresponding to that of Manager
-        state_reps: Any
-            list of state representations corresponding to s(t)
-        context: Any
-            BLANK
+        Parameters
+        ----------
+        states : array_like
+            [batch_size, state_dim] matrix of current Manager state observation
+        next_states : array_like
+            [batch_size, state_dim] matrix of next Manager state observation
+        prev_meta_actions : array_like
+            [batch_size, state_dim] matrix of previous meta Manager action
+        low_states : array_like
+            [batch_size, state_dim, meta_period] matrix of current Worker state
+            observation
+        low_actions : array_like
+            [batch_size, state_dim, meta_period] matrix of current Worker
+            environmental action
+        k : int, optional
+            number of goals returned. Defaults to 10
 
         Returns
         -------
-        next likely goal by the Manager defined by log prob
+        array_like
+            [batch_size, state_dim] matrix of the goals with the largest
+            low-level log-prob
+        """
+        sampled_goals = self._sample(states, next_states, k, prev_meta_actions)
+
+        # Compute the log probability of each of each goal. FIXME
+        sampled_log_probs = self._log_probs(
+            tf.tile(low_states, [k, 1, 1]),
+            tf.tile(low_actions, [k, 1, 1]),
+            [tf.reshape(sampled_goals, [-1, sampled_goals.shape[-1]])])
+
+        # Choose the goals that maximize the log-probability. FIXME
+        fitness = tf.reduce_sum(sampled_log_probs, [2, 3])
+        best_actions = tf.argmax(fitness, 0)
+        actions = tf.gather_nd(
+            sampled_goals,
+            tf.stack(
+                [best_actions,
+                 tf.range(prev_meta_actions.shape[0], dtype=tf.int64)], -1))
+
+        return actions
+
+    # TODO fix me
+    def _log_probs(self, states, actions, goals):
+        """Calculating the log probability of the next goal by the Manager.
+
+        Parameters
+        ----------
+        states : array_like
+            list of states corresponding to that of Manager
+        actions : array_like
+            list of actions performed by the worker during the specified states
+        goals : array_like
+            list of goals performed by the Manager
+
+        Returns
+        -------
+        array_like
+            the error associated with every goal, state, action pair
 
         Helps
         -----
@@ -1499,101 +1530,70 @@ class HIROPolicy(ActorCriticPolicy):
 
         contexts = []
         for index in range(len(states)-1):
-            contexts.append(self.goal_xsition_model(states[index],
-                                                    goals[index],
-                                                    states[index+1]))
+            contexts.append(self.goal_xsition_model(
+                states[index], goals[index], states[index+1]))
 
-        flat_contexts = [tf.reshape(tf.cast(context, states.dtype),
-                                    [batch_dims[0] * batch_dims[1], context.shape[-1]])
-                         for context in contexts]
+        flat_contexts = [
+            tf.reshape(tf.cast(context, states.dtype),
+                       [batch_dims[0] * batch_dims[1], context.shape[-1]])
+            for context in contexts
+        ]
 
         flat_pred_actions = self.worker.get_action(flat_contexts)
 
         pred_actions = tf.reshape(flat_pred_actions,
                                   batch_dims + [flat_pred_actions.shape[-1]])
 
-        error = tf.square(actions - pred_actions)
+        error = np.square(actions - pred_actions)
 
-        spec_range = (tf_spec.maximum - tf_spec.minimum) / 2
+        goal_space = self.manager.ac_space
+        spec_range = (goal_space.high - goal_space.low) / 2
 
-        normalized_error = error / tf.constant(spec_range) ** 2
+        normalized_error = error / spec_range ** 2
 
         return -normalized_error
 
-    def _sample(self,
-                states,
-                next_states,
-                num_samples,
-                orig_goals,
-                tf_spec,
-                sc=0.5):
-        """
-        Sample different goals from a random Gaussian distribution
-        centered at (s_t+c) - (s_t)
+    def _sample(self, states, next_states, num_samples, orig_goals, sc=0.5):
+        """Sample different goals.
 
-        states: Any
+        The goals are extracted from a random Gaussian distribution centered at
+        s_{t+c} - s_t, and with standard deviation sc * goal_range / 2
+
+        Parameters
+        ----------
+        states : array_like
             current time step observation
-        next_states: Any
+        next_states : array_like
             next time step observation
-        num_samples: Any
+        num_samples : int
             number of samples
-        orig_goals: Any
+        orig_goals : array_like
             original goal specified by Manager
-        tf_spec: tf.TensorSpec
-            Metadata for describing the tf.Tensor objects accepted
-            or returned by some TensorFlow APIs.
-        sc: float
-            BLANK
+        sc : float, optional
+            scaling term for the standard deviation
+
+        Returns
+        -------
+        array_like
+            [num_samples, goal_dim] matrix representing the sampled goals
 
         Helps
         -----
         * _sample_best_meta_action(self):
         """
-        goal_dim = orig_goals.shape[-1]
-        spec_range = (tf_spec.maximum - tf_spec.minimum) / 2 * tf.ones([goal_dim])
-        loc = tf.cast(next_states - states, tf.float32)[:, :goal_dim]
-        scale = sc * tf.tile(tf.reshape(spec_range, [1, goal_dim]),
-                             [tf.shape(states)[0], 1])
-        dist = tf.distributions.Normal(loc, scale)
-        if num_samples == 1:
-            return dist.sample()
-        samples = tf.concat([dist.sample(num_samples - 2),
-                             tf.expand_dims(loc, 0),
-                             tf.expand_dims(orig_goals, 0)], 0)
-        return self._clip_to_spec(samples, tf_spec)
+        goal_space = self.manager.ac_space
+        loc = next_states - states
+        scale = sc * (goal_space.high - goal_space.low) / 2
 
-    def _clip_to_spec(self, value, spec):
-        """
-        Clips value to a given bounded tensor spec.
+        # Add the center and the original goal to the samples to test.
+        samples = np.array([loc, orig_goals])
 
-        Args:
-          value: (tensor) value to be clipped.
-          spec: (BoundedTensorSpec) spec containing min. and max. values for clipping.
+        # Sample (num_samples-2) more goals from a Gaussian distribution.
+        samples = np.concatenate(
+            samples,
+            np.random.normal(loc, scale, size=num_samples-2),
+            axis=0
+        )
 
-        Returns:
-          clipped_value: (tensor) `value` clipped to be compatible with `spec`.
-
-        Helps:
-          *_sample(self,
-                states,
-                next_states,
-                num_samples,
-                orig_goals,
-                tf_spec,
-                sc=0.5):
-        """
-        return self.clip_to_bounds(value,
-                                   spec.minimum,
-                                   spec.maximum)
-
-    def clip_to_bounds(self, value, minimum, maximum):
-        """Clips value to be between minimum and maximum.
-        Args:
-          value: (tensor) value to be clipped.
-          minimum: (numpy float array) minimum value to clip to.
-          maximum: (numpy float array) maximum value to clip to.
-        Returns:
-          clipped_value: (tensor) `value` clipped to between `minimum` and `maximum`.
-        """
-        value = tf.minimum(value, maximum)
-        return tf.maximum(value, minimum)
+        # Return the clipped goal values.
+        return np.max(np.min(samples, goal_space.high), goal_space.low)
