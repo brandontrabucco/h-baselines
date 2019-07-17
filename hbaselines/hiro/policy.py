@@ -1243,29 +1243,25 @@ class HIROPolicy(ActorCriticPolicy):
                 low_actions=None  # FIXME
             )
 
-            self.manager.update_from_batch(
-                obs0=None,  # FIXME
-                actions=None,  # FIXME
-                rewards=None,  # FIXME
-                obs1=None,  # FIXME
-                terminals1=None  # FIXME
-            )
+        # Update the Manager policy.
+        self.manager.update_from_batch(
+            obs0=None,  # FIXME
+            actions=None,  # FIXME
+            rewards=None,  # FIXME
+            obs1=None,  # FIXME
+            terminals1=None  # FIXME
+        )
 
-            self.worker.update_from_batch(
-                obs0=None,  # FIXME
-                actions=None,  # FIXME
-                rewards=None,  # FIXME
-                obs1=None,  # FIXME
-                terminals1=None  # FIXME
-            )
+        # Update the Worker policy.
+        self.worker.update_from_batch(
+            obs0=None,  # FIXME
+            actions=None,  # FIXME
+            rewards=None,  # FIXME
+            obs1=None,  # FIXME
+            terminals1=None  # FIXME
+        )
 
-            return 0, 0, {}  # FIXME
-
-        else:
-            # Update the Managers and workers regularly.
-            self.manager.update()
-            self.worker.update()
-            return 0, 0, {}  # FIXME
+        return 0, 0, {}  # FIXME
 
     def get_action(self, obs, state=None, mask=None, **kwargs):
         """See parent class."""
@@ -1395,105 +1391,9 @@ class HIROPolicy(ActorCriticPolicy):
         """
         return obs_t + g_t - obs_tp1
 
-    def off_policy_correction(self,
-                              data,
-                              horizon,
-                              c,
-                              state_reps,
-                              next_state_reprs,
-                              prev_meta_actions,
-                              low_states,
-                              low_actions,
-                              low_state_reprs,
-                              tf_spec,
-                              k=8):
-        """Perform Manager off-policy correction of specified goals.
-
-        Defined by approximately solving the argmax of:
-
-            -0.5 * summation(||a_i - pi(s_i, g_i)|| ** 2 + constant)
-
-        over all values of time between (t, t+c-1)
-
-        Parameters
-        ----------
-        data : tuple
-            replay buffer data
-        horizon : int
-            Manager horizon
-        c : int
-            constant defined in equation
-        state_reps : FIXME
-            FIXME
-        next_state_reprs : FIXME
-            FIXME
-        prev_meta_actions : FIXME
-            FIXME
-        low_states : FIXME
-            FIXME
-        low_actions : FIXME
-            FIXME
-        low_state_reprs : FIXME
-            FIXME
-        tf_spec : FIXME
-            FIXME
-        k : int, optional
-            FIXME
-
-        Returns
-        -------
-        FIXME
-            FIXME
-        """
-        # current goal
-        goals = [tuple(data.index(3)).index(0)]
-
-        tmp = self._sample_best_meta_action(state_reps,
-                                            next_state_reprs,
-                                            prev_meta_actions,
-                                            low_states,
-                                            low_actions,
-                                            low_state_reprs,
-                                            tf_spec,
-                                            k)
-        # 8 candidate goals
-        for elem in tmp:
-            goals.append(elem)
-
-        # goal based on sampling from a distribution centered at (s_t+c - s_t)
-        goals.append(self.manager.get_action(
-            list(data.index(0)).index(-1)) - list(data.index(0)).index(0))  # got my goals
-
-        tmp_actions = list(data.index(1))
-        actions = []
-        for a in tmp_actions:
-            actions.append(a)  # got my actions
-
-        tmp_states = list(data.index(0))
-        states = []
-        for s in tmp_states:
-            states.append(s)  # got my states
-
-        decision_list = []
-        tmp_var = 0
-        index = 0
-
-        for time in range(horizon):
-            tmp_var -= 0.5 * (self.euclidean_distance(
-                actions.index(time), self.worker.get_action(
-                    obs=states.index(time),
-                    meta_act=goals.index(time))) ** 2) + c
-            decision_list.append(dict([(index, tmp_var)]))
-            index, tmp_var = index+1, 0
-
-        # now find the argmax
-        decision = max(decision_list)
-
-        return decision  # todo fix this to be a replacement in replay buffer
-
     @staticmethod
     def euclidean_distance(a, b):
-        """Computes pairwise distances between each elements of A and B.
+        """Compute pairwise distances between each elements of A and B.
 
         Parameters
         ----------
