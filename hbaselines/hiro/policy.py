@@ -952,6 +952,8 @@ class HIROPolicy(ActorCriticPolicy):
     meta_reward : float
         current meta reward, counting as the cumulative environment reward
         during the meta period
+    batch_size : int
+        SGD batch size
     worker : hbaselines.hiro.policy.FeedForwardPolicy
         the worker policy
     worker_reward : function
@@ -1126,8 +1128,12 @@ class HIROPolicy(ActorCriticPolicy):
         # function are to be in the HIRO policy and not the FeedForward.
         self.batch_size = batch_size
 
+        # The following is redundant but necessary if the changes to the update
+        # function are to be in the HIRO policy and not the FeedForward.
+        self.batch_size = batch_size
+
         # =================================================================== #
-        # Part 1. Setup the Worker                                            #
+        # Part 2. Setup the Worker                                            #
         # =================================================================== #
 
         # Create the Worker policy.
@@ -1187,6 +1193,7 @@ class HIROPolicy(ActorCriticPolicy):
     # TODO changes to update
     def update(self):
         """See parent class."""
+        # Not enough samples in the replay buffer.
         if not self.replay_buffer.can_sample(self.batch_size):
             return 0, 0, {}
 
