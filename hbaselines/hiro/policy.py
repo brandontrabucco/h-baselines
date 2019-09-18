@@ -66,7 +66,7 @@ class ActorCriticPolicy(object):
         """
         raise NotImplementedError
 
-    def get_action(self, obs, apply_noise=False, **kwargs):
+    def get_action(self, obs, apply_noise=False, random_actions=False, **kwargs):
         """Call the actor methods to compute policy actions.
 
         Parameters
@@ -76,6 +76,10 @@ class ActorCriticPolicy(object):
         apply_noise : bool, optional
             whether to add Gaussian noise to the output of the actor. Defaults
             to False
+        random_actions : bool, optional
+            if set to True, actions are sampled randomly from the action space
+            instead of being computed by the policy. This is used for
+            exploration purposes.
 
         Returns
         -------
@@ -695,28 +699,37 @@ class FeedForwardPolicy(ActorCriticPolicy):
 
         return critic_loss, actor_loss
 
-    def get_action(self, obs, apply_noise=False, **kwargs):
+    def get_action(self,
+                   obs,
+                   apply_noise=False,
+                   random_actions=False,
+                   **kwargs):
         """See parent class."""
         # Add the contextual observation, if applicable.
         context_obs = kwargs.get("context_obs")
         if context_obs[0] is not None:
             obs = np.concatenate((obs, context_obs), axis=1)
 
-        action = self.sess.run(self.actor_tf, {self.obs_ph: obs})
+        if random_actions:
+            action = self.ac_space.sample()
+        else:
+            action = self.sess.run(self.actor_tf, {self.obs_ph: obs})
 
-        if apply_noise:
-            action_range = (self.ac_space.high - self.ac_space.low) / 2
-            # convert noise percentage to absolute value
-            noise = self.noise * action_range
-            # apply Ornstein-Uhlenbeck process
-            noise *= np.maximum(np.exp(-0.8*kwargs['total_steps']/1e6), 0.05)
-            # compute noisy action
-            action += np.clip(normal(loc=0, scale=noise, size=action.shape),
-                              a_min=0.5 * action_range,
-                              a_max=0.5 * action_range)
+            if apply_noise:
+                action_range = (self.ac_space.high - self.ac_space.low) / 2
+                # convert noise percentage to absolute value
+                noise = self.noise * action_range
+                # apply Ornstein-Uhlenbeck process
+                noise *= np.maximum(
+                    np.exp(-0.8*kwargs['total_steps']/1e6), 0.05)
+                # compute noisy action
+                action += np.clip(
+                    normal(loc=0, scale=noise, size=action.shape),
+                    a_min=0.5 * action_range,
+                    a_max=0.5 * action_range)
 
-        # clip by bounds
-        action = np.clip(action, self.ac_space.low, self.ac_space.high)
+            # clip by bounds
+            action = np.clip(action, self.ac_space.low, self.ac_space.high)
 
         return action
 
@@ -1382,17 +1395,30 @@ class GoalDirectedPolicy(ActorCriticPolicy):
             np.array(worker_rew_all), \
             np.array(worker_done_all)
 
-    def get_action(self, obs, apply_noise=False, **kwargs):
+    def get_action(self,
+                   obs,
+                   apply_noise=False,
+                   random_action=False,
+                   **kwargs):
         """See parent class."""
         # Update the meta action, if the time period requires is.
         if kwargs["time"] % self.meta_period == 0:
-            self.meta_action = self.manager.get_action(
-                obs, apply_noise, **kwargs)
+            if random_action:
+                self.meta_action = self.manager.ac_space.sample()
+            else:
+                self.meta_action = self.manager.get_action(
+                    obs, apply_noise, **kwargs)
+
+        if random_action:
+            worker_action = self.worker.ac_space.sample()
+        else:
+            worker_action = self.worker.get_action(
+                obs, apply_noise,
+                context_obs=self.meta_action,
+                total_steps=kwargs['total_steps'])
 
         # Return the worker action.
-        return self.worker.get_action(
-            obs, apply_noise,
-            context_obs=self.meta_action, total_steps=kwargs['total_steps'])
+        return worker_action
 
     def value(self, obs, action=None, **kwargs):
         """See parent class."""

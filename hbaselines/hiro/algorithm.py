@@ -793,18 +793,15 @@ class TD3(object):
         """
         new_obs, done = [], False
         for _ in range(run_steps or self.nb_rollout_steps):
-            if random_actions:
-                # Use random actions when initializing the replay buffer.
-                action = self.env.action_space.sample()
-                q_value = 0
-            else:
-                # Predict next action.
-                action, q_value = self._policy(
-                    self.obs,
-                    apply_noise=True,
-                    compute_q=True,
-                    context=[getattr(self.env, "current_context", None)],
-                    episode_step=self.episode_step)
+            # Predict next action. Use random actions when initializing the
+            # replay buffer.
+            action, q_value = self._policy(
+                self.obs,
+                apply_noise=True,
+                random_actions=random_actions,
+                compute_q=True,
+                context=[getattr(self.env, "current_context", None)],
+                episode_step=self.episode_step)
             assert action.shape == self.env.action_space.shape
 
             reward = 0
