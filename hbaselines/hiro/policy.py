@@ -774,6 +774,16 @@ class FeedForwardPolicy(ActorCriticPolicy):
         ops += [reduce_std(self.actor_tf)]
         names += ['{}/reference_action_std'.format(base)]
 
+        ops += [tf.reduce_mean(self.critic_with_actor_tf[0])]
+        names += ['{}/reference_actor_Q1_mean'.format(base)]
+        ops += [reduce_std(self.critic_with_actor_tf[0])]
+        names += ['{}/reference_actor_Q1_std'.format(base)]
+
+        ops += [tf.reduce_mean(self.critic_with_actor_tf[1])]
+        names += ['{}/reference_actor_Q2_mean'.format(base)]
+        ops += [reduce_std(self.critic_with_actor_tf[1])]
+        names += ['{}/reference_actor_Q2_std'.format(base)]
+
         # Add all names and ops to the tensorboard summary.
         for op, name in zip(ops, names):
             tf.compat.v1.summary.scalar(name, op)
@@ -1234,7 +1244,7 @@ class GoalDirectedPolicy(ActorCriticPolicy):
         """See parent class."""
         # Not enough samples in the replay buffer.
         if not self.replay_buffer.can_sample(self.batch_size):
-            return
+            return (0, 0), (0, 0)
 
         # Get a batch.
         samples = self.replay_buffer.sample(batch_size=self.batch_size)
@@ -1246,7 +1256,7 @@ class GoalDirectedPolicy(ActorCriticPolicy):
 
         # Update the Manager policy.
         if self.i % self.meta_period == 0:
-            self.manager.update_from_batch(
+            m_critic_loss, m_actor_loss = self.manager.update_from_batch(
                 obs0=meta_obs0,
                 actions=meta_act,
                 rewards=meta_rew,
@@ -1254,10 +1264,12 @@ class GoalDirectedPolicy(ActorCriticPolicy):
                 terminals1=meta_done,
                 update_actor=update_actor,
             )
+        else:
+            m_critic_loss, m_actor_loss = 0, 0
         self.i += 1
 
         # Update the Worker policy.
-        self.worker.update_from_batch(
+        w_critic_loss, w_actor_loss = self.worker.update_from_batch(
             obs0=worker_obs0,
             actions=worker_act,
             rewards=worker_rew,
@@ -1265,6 +1277,8 @@ class GoalDirectedPolicy(ActorCriticPolicy):
             terminals1=worker_done,
             update_actor=update_actor,
         )
+
+        return (m_critic_loss, w_critic_loss), (m_actor_loss, w_actor_loss)
 
     @staticmethod
     def _process_samples(samples):

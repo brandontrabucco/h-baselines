@@ -865,12 +865,12 @@ class TD3(object):
         """
         for t_train in range(self.nb_train_steps):
             # Run a step of training from batch.
-            self.policy_tf.update(
+            critic_loss, actor_loss = self.policy_tf.update(
                 update_actor=self.total_steps % self.actor_update_freq == 0)
 
             # Add actor and critic loss information for logging purposes.
-            self.epoch_critic_losses.append(0)  # FIXME: remove
-            self.epoch_actor_losses.append(0)  # FIXME: remove
+            self.epoch_critic_losses.append(critic_loss)
+            self.epoch_actor_losses.append(actor_loss)
 
     def _evaluate(self, total_timesteps):
         """Perform the evaluation operation.
