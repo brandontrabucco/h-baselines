@@ -66,7 +66,11 @@ class ActorCriticPolicy(object):
         """
         raise NotImplementedError
 
-    def get_action(self, obs, apply_noise=False, random_actions=False, **kwargs):
+    def get_action(self,
+                   obs,
+                   apply_noise=False,
+                   random_actions=False,
+                   **kwargs):
         """Call the actor methods to compute policy actions.
 
         Parameters
