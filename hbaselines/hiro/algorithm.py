@@ -28,6 +28,9 @@ except (ImportError, ModuleNotFoundError):
 from hbaselines.envs.efficient_hrl.envs import AntMaze, AntFall, AntPush
 from hbaselines.envs.hac.envs import UR5, Pendulum
 
+# This is to include logging info messages
+logging.getLogger().setLevel(logging.INFO)
+
 
 def as_scalar(scalar):
     """Check and return the input if it is a scalar.
@@ -82,18 +85,15 @@ class TD3(object):
         the number of rollout steps
     nb_eval_episodes : int
         the number of evaluation episodes
-    normalize_observations : bool
-        should the observation be normalized
+    actor_update_freq : int
+        number of training steps per actor policy update step. The critic
+        policy is updated every training step.
     tau : float
         the soft update coefficient (keep old values, between 0 and 1)
     batch_size : int
         the size of the batch for learning the policy
-    normalize_returns : bool
-        should the critic output be normalized
     critic_l2_reg : float
         l2 regularizer coefficient
-    return_range : (float, float)
-        the bounding values for the critic output
     actor_lr : float
         the actor learning rate
     critic_lr : float
@@ -207,12 +207,10 @@ class TD3(object):
                  nb_train_steps=1,
                  nb_rollout_steps=1,
                  nb_eval_episodes=50,
-                 normalize_observations=False,
+                 actor_update_freq=1,
                  tau=0.001,
                  batch_size=100,
-                 normalize_returns=False,
                  critic_l2_reg=0.,
-                 return_range=(-np.inf, np.inf),
                  actor_lr=1e-4,
                  critic_lr=1e-3,
                  clip_norm=None,
@@ -254,18 +252,15 @@ class TD3(object):
             the number of rollout steps
         nb_eval_episodes : int
             the number of evaluation episodes
-        normalize_observations : bool
-            should the observation be normalized
+        actor_update_freq : int
+            number of training steps per actor policy update step. The critic
+            policy is updated every training step.
         tau : float
             the soft update coefficient (keep old values, between 0 and 1)
         batch_size : int
             the size of the batch for learning the policy
-        normalize_returns : bool
-            should the critic output be normalized
         critic_l2_reg : float
             l2 regularizer coefficient
-        return_range : (float, float)
-            the bounding values for the critic output
         actor_lr : float
             the actor learning rate
         critic_lr : float
@@ -316,12 +311,10 @@ class TD3(object):
         self.nb_train_steps = nb_train_steps
         self.nb_rollout_steps = nb_rollout_steps
         self.nb_eval_episodes = nb_eval_episodes
-        self.normalize_observations = normalize_observations
+        self.actor_update_freq = actor_update_freq
         self.tau = tau
         self.batch_size = batch_size
-        self.normalize_returns = normalize_returns
         self.critic_l2_reg = critic_l2_reg
-        self.return_range = return_range
         self.actor_lr = actor_lr
         self.critic_lr = critic_lr
         self.clip_norm = clip_norm
@@ -509,7 +502,6 @@ class TD3(object):
                 self.observation_space,
                 self.action_space,
                 self.context_space,
-                return_range=self.return_range,
                 buffer_size=self.buffer_size,
                 batch_size=self.batch_size,
                 actor_lr=self.actor_lr,
@@ -519,8 +511,6 @@ class TD3(object):
                 verbose=self.verbose,
                 tau=self.tau,
                 gamma=self.gamma,
-                normalize_observations=self.normalize_observations,
-                normalize_returns=self.normalize_returns,
                 **additional_params
             )
 
@@ -582,12 +572,11 @@ class TD3(object):
             total_steps=self.total_steps,
             time=kwargs["episode_step"],
             context_obs=kwargs["context"])
-        action = action.flatten()
 
-        q_value = self.policy_tf.value(obs, context_obs=kwargs["context"]) \
-            if compute_q else None
+        q_value = self.policy_tf.value(
+            obs, action, context_obs=kwargs["context"]) if compute_q else None
 
-        return action, q_value
+        return action.flatten(), q_value
 
     def _store_transition(self, obs0, action, reward, obs1, terminal1):
         """Store a transition in the replay buffer.
@@ -623,7 +612,7 @@ class TD3(object):
               log_interval=100,
               eval_interval=5e4,
               exp_num=None,
-              start_timesteps=10000):
+              start_timesteps=30000):
         """Return a trained model.
 
         Parameters
@@ -700,7 +689,9 @@ class TD3(object):
             self.epoch_episode_steps = []
             # Perform rollouts.
             print("Collecting pre-samples...")
-            self._collect_samples(total_timesteps, run_steps=start_timesteps)
+            self._collect_samples(total_timesteps,
+                                  run_steps=start_timesteps,
+                                  random_actions=True)
             print("Done!")
             self.episode_reward = 0
             self.episode_step = 0
@@ -782,7 +773,10 @@ class TD3(object):
         """
         self.saver.restore(self.sess, load_path)
 
-    def _collect_samples(self, total_timesteps, run_steps=None):
+    def _collect_samples(self,
+                         total_timesteps,
+                         run_steps=None,
+                         random_actions=False):
         """Perform the sample collection operation.
 
         This method is responsible for executing rollouts for a number of steps
@@ -802,13 +796,18 @@ class TD3(object):
 
         new_obs, done = [], False
         for _ in range(run_steps or self.nb_rollout_steps):
-            # Predict next action.
-            action, q_value = self._policy(
-                self.obs,
-                apply_noise=True,
-                compute_q=True,
-                context=[getattr(self.env, "current_context", None)],
-                episode_step=self.episode_step)
+            if random_actions:
+                # Use random actions when initializing the replay buffer.
+                action = self.env.action_space.sample()
+                q_value = 0
+            else:
+                # Predict next action.
+                action, q_value = self._policy(
+                    self.obs,
+                    apply_noise=True,
+                    compute_q=True,
+                    context=[getattr(self.env, "current_context", None)],
+                    episode_step=self.episode_step)
             assert action.shape == self.env.action_space.shape
 
             reward = 0
@@ -870,11 +869,12 @@ class TD3(object):
         """
         for t_train in range(self.nb_train_steps):
             # Run a step of training from batch.
-            critic_loss, actor_loss = self.policy_tf.update()
+            self.policy_tf.update(
+                update_actor=self.total_steps % self.actor_update_freq == 0)
 
             # Add actor and critic loss information for logging purposes.
-            self.epoch_critic_losses.append(critic_loss)
-            self.epoch_actor_losses.append(actor_loss)
+            self.epoch_critic_losses.append(0)  # FIXME: remove
+            self.epoch_actor_losses.append(0)  # FIXME: remove
 
     def _evaluate(self, total_timesteps):
         """Perform the evaluation operation.

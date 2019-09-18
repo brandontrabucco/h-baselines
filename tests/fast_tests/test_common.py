@@ -96,12 +96,6 @@ class TestTrain(unittest.TestCase):
 class TestStats(unittest.TestCase):
     """A simple test to get Travis running."""
 
-    def test_normalize(self):
-        pass
-
-    def test_denormalize(self):
-        pass
-
     def test_reduce_var(self):
         pass
 

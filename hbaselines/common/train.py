@@ -1,6 +1,5 @@
 """Utility methods when performing training."""
 import argparse
-import numpy as np
 import os
 import errno
 
@@ -9,12 +8,10 @@ DEFAULT_TD3_HP = dict(
     nb_train_steps=1,
     nb_rollout_steps=1,
     nb_eval_episodes=50,
-    normalize_observations=False,
+    actor_update_freq=1,
     tau=0.005,
-    batch_size=100,
-    normalize_returns=False,
-    critic_l2_reg=0.,
-    return_range=(-np.inf, np.inf),
+    batch_size=128,
+    critic_l2_reg=0.01,
     actor_lr=1e-4,
     critic_lr=1e-3,
     clip_norm=None,
@@ -37,10 +34,9 @@ def get_hyperparameters(args):
         "nb_train_steps": args.nb_train_steps,
         "nb_rollout_steps": args.nb_rollout_steps,
         "nb_eval_episodes": args.nb_eval_episodes,
-        "normalize_observations": args.normalize_observations,
+        "actor_update_freq": args.actor_update_freq,
         "tau": args.tau,
         "batch_size": args.batch_size,
-        # "normalize_returns": args.normalize_returns,
         "critic_l2_reg": args.critic_l2_reg,
         "actor_lr": args.actor_lr,
         "critic_lr": args.critic_lr,
@@ -90,6 +86,9 @@ def parse_options(description, example_usage, args):
     parser.add_argument(
         '--steps',  type=int, default=1e6,
         help='Total number of timesteps used during training.')
+    parser.add_argument(
+        '--seed', type=int, default=1,
+        help='Sets the seed for numpy, tensorflow, and random.')
 
     # algorithm-specific hyperparameters
     parser = create_td3_parser(parser)
@@ -147,9 +146,11 @@ def create_td3_parser(parser):
                         type=int,
                         default=DEFAULT_TD3_HP['nb_eval_episodes'],
                         help='the number of evaluation episodes')
-    parser.add_argument('--normalize_observations',
-                        action='store_true',
-                        help='should the observation be normalized')
+    parser.add_argument('--actor_update_freq',
+                        type=int,
+                        default=DEFAULT_TD3_HP['actor_update_freq'],
+                        help='the number training step per actor policy '
+                             'update step')
     parser.add_argument('--render',
                         action='store_true',
                         help='enable rendering of the environment')
