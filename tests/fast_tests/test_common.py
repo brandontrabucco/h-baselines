@@ -26,7 +26,6 @@ class TestTrain(unittest.TestCase):
                          DEFAULT_TD3_HP["nb_rollout_steps"])
         self.assertEqual(args.nb_eval_episodes,
                          DEFAULT_TD3_HP["nb_eval_episodes"])
-        self.assertEqual(args.normalize_observations, False)
         self.assertEqual(args.render, False)
         self.assertEqual(args.verbose, 2)
         self.assertEqual(args.buffer_size, DEFAULT_TD3_HP["buffer_size"])
@@ -80,7 +79,6 @@ class TestTrain(unittest.TestCase):
         self.assertEqual(hp["nb_train_steps"], 11)
         self.assertEqual(hp["nb_rollout_steps"], 12)
         self.assertEqual(hp["nb_eval_episodes"], 13)
-        self.assertEqual(hp["normalize_observations"], True)
         self.assertEqual(hp["render"], True)
         self.assertEqual(hp["verbose"], 14)
         self.assertEqual(hp["buffer_size"], 15)

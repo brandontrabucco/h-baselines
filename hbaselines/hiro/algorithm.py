@@ -10,7 +10,6 @@ import time
 from collections import deque
 import csv
 import random
-import logging
 from copy import deepcopy
 import gym
 from gym.spaces import Box
@@ -27,9 +26,6 @@ except (ImportError, ModuleNotFoundError):
     pass
 from hbaselines.envs.efficient_hrl.envs import AntMaze, AntFall, AntPush
 from hbaselines.envs.hac.envs import UR5, Pendulum
-
-# This is to include logging info messages
-logging.getLogger().setLevel(logging.INFO)
 
 
 def as_scalar(scalar):
@@ -658,8 +654,8 @@ class TD3(object):
         tf.compat.v1.set_random_seed(seed)
 
         if self.verbose >= 2:
-            logging.info('Using agent with the following configuration:')
-            logging.info(str(self.__dict__.items()))
+            print('Using agent with the following configuration:')
+            print(str(self.__dict__.items()))
 
         # Initialize class variables.
         steps_incr = 0
@@ -1033,12 +1029,12 @@ class TD3(object):
                 w.writerow(combined_stats)
 
         # Print statistics.
-        logging.info("-" * 57)
+        print("-" * 57)
         for key in sorted(combined_stats.keys()):
             val = combined_stats[key]
-            logging.info("| {:<25} | {:<25} |".format(key, val))
-        logging.info("-" * 57)
-        logging.info('')
+            print("| {:<25} | {:<25} |".format(key, val))
+        print("-" * 57)
+        print('')
 
     def _log_eval(self,
                   file_path,

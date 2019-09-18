@@ -1,6 +1,5 @@
 """TensorFlow utility methods."""
 import tensorflow as tf
-from stable_baselines import logger
 import os
 import multiprocessing
 
@@ -134,7 +133,7 @@ def get_target_updates(_vars, target_vars, tau, verbose=0):
         soft update
     """
     if verbose >= 2:
-        logger.info('setting up target updates ...')
+        print('setting up target updates ...')
 
     soft_updates = []
     init_updates = []
@@ -142,7 +141,7 @@ def get_target_updates(_vars, target_vars, tau, verbose=0):
 
     for var, target_var in zip(_vars, target_vars):
         if verbose >= 2:
-            logger.info('  {} <- {}'.format(target_var.name, var.name))
+            print('  {} <- {}'.format(target_var.name, var.name))
         init_updates.append(tf.compat.v1.assign(target_var, var))
         soft_updates.append(
             tf.compat.v1.assign(target_var, (1.-tau) * target_var + tau * var))

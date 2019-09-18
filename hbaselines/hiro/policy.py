@@ -3,7 +3,6 @@ import tensorflow as tf
 import numpy as np
 from numpy.random import normal
 from functools import reduce
-import logging
 from gym.spaces import Box
 import random
 
@@ -198,6 +197,9 @@ class FeedForwardPolicy(ActorCriticPolicy):
         the output from the actor network
     critic_tf : tf.Variable
         the output from the critic network
+    critic_with_actor_tf : tf.Variable
+        the output from the critic network with the action provided directly by
+        the actor policy
     target_q : tf.Variable
         the Q-value as estimated by the current reward and next step estimate
         by the target Q-value
@@ -273,11 +275,10 @@ class FeedForwardPolicy(ActorCriticPolicy):
             target update rate
         gamma : float
             discount factor
-        noise : float, optional
+        noise : float
             scaling term to the range of the action space, that is subsequently
             used as the standard deviation of Gaussian noise added to the
-            action if `apply_noise` is set to True in `get_action`. Defaults to
-            0.05, i.e. 5% of action range.
+            action if `apply_noise` is set to True in `get_action`.
         layer_norm : bool
             enable layer normalisation
         reuse : bool
@@ -391,8 +392,7 @@ class FeedForwardPolicy(ActorCriticPolicy):
         with tf.variable_scope("loss", reuse=False):
             q_obs1 = tf.minimum(critic_target[0], critic_target[1])
             self.target_q = tf.stop_gradient(
-                self.rew_ph + (1. - self.terminals1) * gamma * q_obs1
-            )
+                self.rew_ph + (1. - self.terminals1) * gamma * q_obs1)
 
             tf.compat.v1.summary.scalar('critic_target',
                                         tf.reduce_mean(self.target_q))
@@ -411,7 +411,7 @@ class FeedForwardPolicy(ActorCriticPolicy):
         self.target_soft_updates = soft_updates
 
         # =================================================================== #
-        # Step 5: Setup the optimizers for the actor and critic.              #
+        # Step 4: Setup the optimizers for the actor and critic.              #
         # =================================================================== #
 
         with tf.variable_scope("Adam_mpi", reuse=False):
@@ -421,7 +421,7 @@ class FeedForwardPolicy(ActorCriticPolicy):
             tf.compat.v1.summary.scalar('critic_loss', self.critic_loss)
 
         # =================================================================== #
-        # Step 6: Setup the operations for computing model statistics.        #
+        # Step 5: Setup the operations for computing model statistics.        #
         # =================================================================== #
 
         self.stats_sample = None
@@ -433,7 +433,7 @@ class FeedForwardPolicy(ActorCriticPolicy):
     def _setup_actor_optimizer(self, scope):
         """Create the actor loss, gradient, and optimizer."""
         if self.verbose >= 2:
-            logging.info('setting up actor optimizer')
+            print('setting up actor optimizer')
 
         scope_name = 'model/pi/'
         if scope is not None:
@@ -445,8 +445,8 @@ class FeedForwardPolicy(ActorCriticPolicy):
                             for var in get_trainable_vars(scope_name)]
             actor_nb_params = sum([reduce(lambda x, y: x * y, shape)
                                    for shape in actor_shapes])
-            logging.info('  actor shapes: {}'.format(actor_shapes))
-            logging.info('  actor params: {}'.format(actor_nb_params))
+            print('  actor shapes: {}'.format(actor_shapes))
+            print('  actor params: {}'.format(actor_nb_params))
 
         # create an optimizer object
         optimizer = tf.compat.v1.train.AdamOptimizer(self.actor_lr)
@@ -465,7 +465,7 @@ class FeedForwardPolicy(ActorCriticPolicy):
     def _setup_critic_optimizer(self, scope):
         """Create the critic loss, gradient, and optimizer."""
         if self.verbose >= 2:
-            logging.info('setting up critic optimizer')
+            print('setting up critic optimizer')
 
         # TODO: maybe huber loss
         mse = tf.compat.v1.losses.mean_squared_error
@@ -489,8 +489,8 @@ class FeedForwardPolicy(ActorCriticPolicy):
 
             if self.verbose >= 2:
                 for var in critic_reg_vars:
-                    logging.info('  regularizing: {}'.format(var.name))
-                logging.info('  applying l2 regularization with {}'.format(
+                    print('  regularizing: {}'.format(var.name))
+                print('  applying l2 regularization with {}'.format(
                     self.critic_l2_reg))
 
             critic_reg = tf.contrib.layers.apply_regularization(
@@ -512,8 +512,8 @@ class FeedForwardPolicy(ActorCriticPolicy):
                                  for var in get_trainable_vars(scope_name)]
                 critic_nb_params = sum([reduce(lambda x, y: x * y, shape)
                                         for shape in critic_shapes])
-                logging.info('  critic shapes: {}'.format(critic_shapes))
-                logging.info('  critic params: {}'.format(critic_nb_params))
+                print('  critic shapes: {}'.format(critic_shapes))
+                print('  critic params: {}'.format(critic_nb_params))
 
             # create an optimizer object
             optimizer = tf.compat.v1.train.AdamOptimizer(self.critic_lr)
@@ -986,11 +986,10 @@ class GoalDirectedPolicy(ActorCriticPolicy):
             target update rate
         gamma : float
             discount factor
-        noise : float, optional
+        noise : float
             scaling term to the range of the action space, that is subsequently
             used as the standard deviation of Gaussian noise added to the
-            action if `apply_noise` is set to True in `get_action`. Defaults to
-            0.05, i.e. 5% of action range.
+            action if `apply_noise` is set to True in `get_action`.
         layer_norm : bool
             enable layer normalisation
         reuse : bool
