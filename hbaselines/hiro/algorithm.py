@@ -1009,11 +1009,6 @@ class TD3(object):
         combined_stats['rollout/episodes'] = self.epoch_episodes
         combined_stats['rollout/actions_std'] = np.std(self.epoch_actions)
 
-        # combined_stats_sums = MPI.COMM_WORLD.allreduce(
-        #     np.array([as_scalar(x) for x in combined_stats.values()]))
-        # combined_stats = {k: v / mpi_size for (k, v) in
-        #                   zip(combined_stats.keys(), combined_stats_sums)}
-
         # Total statistics.
         combined_stats['total/epochs'] = self.epoch + 1
         combined_stats['total/steps'] = self.total_steps

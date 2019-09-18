@@ -208,6 +208,8 @@ class FeedForwardPolicy(ActorCriticPolicy):
         target actor/critic to match those actual actor/critic
     target_soft_updates : tf.Operation
         soft target update function
+    actor_loss : tf.Operation
+        the operation that returns the loss of the actor
     actor_grads : tf.Operation
         the operation that returns the gradients of the trainable parameters of
         the actor
@@ -299,7 +301,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
         super(FeedForwardPolicy, self).__init__(sess,
                                                 ob_space, ac_space, co_space)
 
-        self.val = False  # FIXME: remove
         self.buffer_size = buffer_size
         self.batch_size = batch_size
         self.actor_lr = actor_lr
@@ -599,7 +600,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
             for i, layer_size in enumerate(self.layers):
                 qf_h = tf.layers.dense(qf_h, layer_size, name='fc' + str(i))
                 if self.layer_norm:
-                    qf_h = tf.contrib.layers.batch_norm(qf_h)
                     qf_h = tf.contrib.layers.layer_norm(
                         qf_h, center=True, scale=True)
                 qf_h = self.activ(qf_h)
@@ -703,7 +703,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
             obs = np.concatenate((obs, context_obs), axis=1)
 
         action = self.sess.run(self.actor_tf, {self.obs_ph: obs})
-        action = np.clip(action, self.ac_space.low, self.ac_space.high)
 
         if apply_noise:
             action_range = (self.ac_space.high - self.ac_space.low) / 2
@@ -715,7 +714,9 @@ class FeedForwardPolicy(ActorCriticPolicy):
             action += np.clip(normal(loc=0, scale=noise, size=action.shape),
                               a_min=0.5 * action_range,
                               a_max=0.5 * action_range)
-            action = np.clip(action, self.ac_space.low, self.ac_space.high)
+
+        # clip by bounds
+        action = np.clip(action, self.ac_space.low, self.ac_space.high)
 
         return action
 
@@ -769,11 +770,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
         ops += [reduce_std(self.critic_tf[1])]
         names += ['{}/reference_Q2_std'.format(base)]
 
-        ops += [tf.reduce_mean(self.actor_tf)]
-        names += ['{}/reference_action_mean'.format(base)]
-        ops += [reduce_std(self.actor_tf)]
-        names += ['{}/reference_action_std'.format(base)]
-
         ops += [tf.reduce_mean(self.critic_with_actor_tf[0])]
         names += ['{}/reference_actor_Q1_mean'.format(base)]
         ops += [reduce_std(self.critic_with_actor_tf[0])]
@@ -783,6 +779,11 @@ class FeedForwardPolicy(ActorCriticPolicy):
         names += ['{}/reference_actor_Q2_mean'.format(base)]
         ops += [reduce_std(self.critic_with_actor_tf[1])]
         names += ['{}/reference_actor_Q2_std'.format(base)]
+
+        ops += [tf.reduce_mean(self.actor_tf)]
+        names += ['{}/reference_action_mean'.format(base)]
+        ops += [reduce_std(self.actor_tf)]
+        names += ['{}/reference_action_std'.format(base)]
 
         # Add all names and ops to the tensorboard summary.
         for op, name in zip(ops, names):
