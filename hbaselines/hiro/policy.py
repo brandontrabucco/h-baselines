@@ -415,8 +415,8 @@ class FeedForwardPolicy(ActorCriticPolicy):
         # =================================================================== #
 
         with tf.variable_scope("Adam_mpi", reuse=False):
-            self._setup_critic_optimizer(scope=scope)
             self._setup_actor_optimizer(scope=scope)
+            self._setup_critic_optimizer(scope=scope)
             tf.compat.v1.summary.scalar('actor_loss', self.actor_loss)
             tf.compat.v1.summary.scalar('critic_loss', self.critic_loss)
 
