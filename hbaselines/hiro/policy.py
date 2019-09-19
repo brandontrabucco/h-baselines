@@ -187,6 +187,10 @@ class FeedForwardPolicy(ActorCriticPolicy):
         enable layer normalisation
     activ : tf.nn.*
         the activation function to use in the neural network
+    use_huber : bool
+        specifies whether to use the huber distance function as the loss for
+        the critic. If set to False, the mean-squared error metric is used
+        instead
     replay_buffer : hbaselines.hiro.replay_buffer.ReplayBuffer
         the replay buffer
     critic_target : tf.compat.v1.placeholder
@@ -253,6 +257,7 @@ class FeedForwardPolicy(ActorCriticPolicy):
                  reuse=False,
                  layers=None,
                  act_fun=tf.nn.relu,
+                 use_huber=False,
                  scope=None):
         """Instantiate the feed-forward neural network policy.
 
@@ -298,6 +303,10 @@ class FeedForwardPolicy(ActorCriticPolicy):
             [64, 64])
         act_fun : tf.nn.*
             the activation function to use in the neural network
+        use_huber : bool
+            specifies whether to use the huber distance function as the loss
+            for the critic. If set to False, the mean-squared error metric is
+            used instead
         scope : str
             an upper-level scope term. Used by policies that call this one.
 
@@ -323,6 +332,7 @@ class FeedForwardPolicy(ActorCriticPolicy):
         self.noise = noise
         self.layer_norm = layer_norm
         self.activ = act_fun
+        self.use_huber = use_huber
         assert len(self.layers) >= 1, \
             "Error: must have at least one hidden layer for the policy."
 
@@ -476,11 +486,15 @@ class FeedForwardPolicy(ActorCriticPolicy):
         if self.verbose >= 2:
             print('setting up critic optimizer')
 
-        # TODO: maybe huber loss
-        mse = tf.compat.v1.losses.mean_squared_error
+        # choose the loss function
+        if self.use_huber:
+            loss_fn = tf.compat.v1.losses.huber_loss
+        else:
+            loss_fn = tf.compat.v1.losses.mean_squared_error
+
         self.critic_loss = \
-            mse(self.critic_tf[0], self.target_q) + \
-            mse(self.critic_tf[1], self.target_q)
+            loss_fn(self.critic_tf[0], self.target_q) + \
+            loss_fn(self.critic_tf[1], self.target_q)
 
         if self.critic_l2_reg > 0.:
             critic_reg_vars = []
@@ -975,6 +989,7 @@ class GoalDirectedPolicy(ActorCriticPolicy):
                  reuse=False,
                  layers=None,
                  act_fun=tf.nn.relu,
+                 use_huber=True,
                  meta_period=10,
                  relative_goals=False,
                  off_policy_corrections=False,
@@ -1027,6 +1042,10 @@ class GoalDirectedPolicy(ActorCriticPolicy):
             [64, 64])
         act_fun : tf.nn.*
             the activation function to use in the neural network
+        use_huber : bool
+            specifies whether to use the huber distance function as the loss
+            for the critic. If set to False, the mean-squared error metric is
+            used instead
         meta_period : int, optional
             manger action period. Defaults to 10.
         relative_goals : bool, optional
@@ -1151,6 +1170,7 @@ class GoalDirectedPolicy(ActorCriticPolicy):
                 act_fun=act_fun,
                 scope="Manager",
                 noise=noise,
+                use_huber=use_huber,
             )
 
         # previous observation by the Manager
@@ -1208,6 +1228,7 @@ class GoalDirectedPolicy(ActorCriticPolicy):
                 act_fun=act_fun,
                 scope="Worker",
                 noise=noise,
+                use_huber=use_huber,
             )
 
         # remove the last element to compute the reward FIXME
@@ -1280,7 +1301,8 @@ class GoalDirectedPolicy(ActorCriticPolicy):
                 rewards=meta_rew,
                 obs1=meta_obs1,
                 terminals1=meta_done,
-                update_actor=update_actor,
+                # FIXME: replace 2 with freq variable
+                update_actor=self.i % (self.meta_period * 2) == 0,
             )
         else:
             m_critic_loss, m_actor_loss = 0, 0
@@ -1304,7 +1326,7 @@ class GoalDirectedPolicy(ActorCriticPolicy):
 
         Parameters
         ----------
-        samples : list of tuple
+        samples : list of tuple or Any
             each element of the tuples consists of:
 
             * list of (numpy.ndarray, numpy.ndarray): the previous and next
@@ -1431,8 +1453,19 @@ class GoalDirectedPolicy(ActorCriticPolicy):
     def store_transition(self, obs0, action, reward, obs1, done, **kwargs):
         """See parent class."""
         # Compute the worker reward and append it to the list of rewards.
+        state_indices = list(np.arange(0, self.manager.ac_space.shape[0]))
+        meta_ac_range = (self.manager.ac_space.high -
+                         self.manager.ac_space.low) / 2
+        rew_obs0 = obs0.copy()
+        rew_obs0[state_indices] = rew_obs0[state_indices] / meta_ac_range
+        rew_obs1 = obs1.copy()
+        rew_obs1[state_indices] = rew_obs1[state_indices] / meta_ac_range
         self._worker_rewards.append(
-            self.worker_reward(obs0, self.meta_action.flatten(), obs1)
+            self.worker_reward(
+                rew_obs0,
+                self.meta_action.flatten() / meta_ac_range,
+                rew_obs1
+            )
         )
 
         # Add the environmental observations and done masks, and the worker
@@ -1478,7 +1511,7 @@ class GoalDirectedPolicy(ActorCriticPolicy):
                     reward_t=self._worker_rewards,
                     done=self._dones,
                     meta_obs_t=(self.prev_meta_obs, meta_obs1),
-                    meta_reward_t=0.1*self.meta_reward,
+                    meta_reward_t=self.meta_reward,
                 )
 
                 # Reset the meta reward.

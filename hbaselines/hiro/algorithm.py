@@ -607,7 +607,7 @@ class TD3(object):
               log_interval=100,
               eval_interval=5e4,
               exp_num=None,
-              start_timesteps=30000):
+              start_timesteps=10000):
         """Return a trained model.
 
         Parameters
@@ -864,7 +864,9 @@ class TD3(object):
         for t_train in range(self.nb_train_steps):
             # Run a step of training from batch.
             critic_loss, actor_loss = self.policy_tf.update(
-                update_actor=self.total_steps % self.actor_update_freq == 0)
+                update_actor=self.total_steps % (self.nb_train_steps *
+                                                 self.actor_update_freq) == 0
+            )
 
             # Add actor and critic loss information for logging purposes.
             self.epoch_critic_losses.append(critic_loss)

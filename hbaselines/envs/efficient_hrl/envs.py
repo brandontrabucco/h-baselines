@@ -150,10 +150,6 @@ class UniversalAntMazeEnv(AntMazeEnv):
             )
             info["is_success"] = abs(dist) < 5
 
-        #     # Compute the done in terms of the distance to the current
-        #     # context.
-        #     # done = done or new_done != 1  # FIXME
-
         # Check if the time horizon has been met.
         self.step_number += 1
         done = done or self.step_number == self.horizon
@@ -237,7 +233,7 @@ class AntMaze(UniversalAntMazeEnv):
                 state_indices=[0, 1],
                 relative_context=False,
                 offset=0.0,
-                reward_scales=1.0
+                reward_scales=0.1
             )
 
         super(AntMaze, self).__init__(
@@ -295,7 +291,7 @@ class AntPush(UniversalAntMazeEnv):
                 state_indices=[0, 1],
                 relative_context=False,
                 offset=0.0,
-                reward_scales=1.0
+                reward_scales=0.1
             )
 
         super(AntPush, self).__init__(
@@ -355,7 +351,7 @@ class AntFall(UniversalAntMazeEnv):
                 state_indices=[0, 1, 2],
                 relative_context=False,
                 offset=0.0,
-                reward_scales=1.0
+                reward_scales=0.1
             )
 
         super(AntFall, self).__init__(
