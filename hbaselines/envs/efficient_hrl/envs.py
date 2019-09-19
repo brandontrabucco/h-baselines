@@ -6,6 +6,9 @@ from gym.spaces import Box
 from hbaselines.common.reward_fns import negative_distance
 from hbaselines.envs.efficient_hrl.ant_maze_env import AntMazeEnv
 
+# scale to the contextual reward. Does not affect the environmental reward.
+REWARD_SCALE = 0.1
+
 
 class UniversalAntMazeEnv(AntMazeEnv):
     """Universal environment variant of AntMazeEnv.
@@ -148,7 +151,7 @@ class UniversalAntMazeEnv(AntMazeEnv):
                 next_states=obs,
                 goals=self.current_context,
             )
-            info["is_success"] = abs(dist) < 5
+            info["is_success"] = abs(dist) < 5 * REWARD_SCALE
 
         # Check if the time horizon has been met.
         self.step_number += 1
@@ -233,7 +236,7 @@ class AntMaze(UniversalAntMazeEnv):
                 state_indices=[0, 1],
                 relative_context=False,
                 offset=0.0,
-                reward_scales=0.1
+                reward_scales=REWARD_SCALE
             )
 
         super(AntMaze, self).__init__(
@@ -291,7 +294,7 @@ class AntPush(UniversalAntMazeEnv):
                 state_indices=[0, 1],
                 relative_context=False,
                 offset=0.0,
-                reward_scales=0.1
+                reward_scales=REWARD_SCALE
             )
 
         super(AntPush, self).__init__(
@@ -351,7 +354,7 @@ class AntFall(UniversalAntMazeEnv):
                 state_indices=[0, 1, 2],
                 relative_context=False,
                 offset=0.0,
-                reward_scales=0.1
+                reward_scales=REWARD_SCALE
             )
 
         super(AntFall, self).__init__(
