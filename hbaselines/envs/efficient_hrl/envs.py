@@ -8,6 +8,8 @@ from hbaselines.envs.efficient_hrl.ant_maze_env import AntMazeEnv
 
 # scale to the contextual reward. Does not affect the environmental reward.
 REWARD_SCALE = 0.1
+# threshold after which the agent is considered to have reached its target
+DISTANCE_THRESHOLD = 5
 
 
 class UniversalAntMazeEnv(AntMazeEnv):
@@ -151,7 +153,7 @@ class UniversalAntMazeEnv(AntMazeEnv):
                 next_states=obs,
                 goals=self.current_context,
             )
-            info["is_success"] = abs(dist) < 5 * REWARD_SCALE
+            info["is_success"] = abs(dist) < DISTANCE_THRESHOLD * REWARD_SCALE
 
         # Check if the time horizon has been met.
         self.step_number += 1
