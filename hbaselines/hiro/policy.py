@@ -1,7 +1,6 @@
 """TD3-compatible policies."""
 import tensorflow as tf
 import numpy as np
-from numpy.random import normal
 from functools import reduce
 from gym.spaces import Box
 import random
@@ -191,6 +190,9 @@ class FeedForwardPolicy(ActorCriticPolicy):
         specifies whether to use the huber distance function as the loss for
         the critic. If set to False, the mean-squared error metric is used
         instead
+    action_noise : array_like
+        the std of the noise to be applied to the actions. Scaled by the action
+        range
     replay_buffer : hbaselines.hiro.replay_buffer.ReplayBuffer
         the replay buffer
     critic_target : tf.compat.v1.placeholder
@@ -252,7 +254,7 @@ class FeedForwardPolicy(ActorCriticPolicy):
                  verbose,
                  tau,
                  gamma,
-                 noise=0.1,
+                 noise=0.05,
                  layer_norm=False,
                  reuse=False,
                  layers=None,
@@ -335,6 +337,9 @@ class FeedForwardPolicy(ActorCriticPolicy):
         self.use_huber = use_huber
         assert len(self.layers) >= 1, \
             "Error: must have at least one hidden layer for the policy."
+
+        # convert noise percentage to absolute value
+        self.action_noise = noise * (ac_space.high - ac_space.low) / 2
 
         # =================================================================== #
         # Step 1: Create a replay buffer object.                              #
@@ -687,6 +692,23 @@ class FeedForwardPolicy(ActorCriticPolicy):
         rewards = rewards.reshape(-1, 1)
         terminals1 = terminals1.reshape(-1, 1)
 
+        # add smoothing noise to the actions (as per TD3 implementation)
+        actions = np.clip(
+            actions + np.clip(
+                np.random.normal(
+                    loc=0,
+                    scale=[self.action_noise
+                           for _ in range(actions.shape[0])],
+                ),
+                a_min=[-5 * self.action_noise
+                       for _ in range(actions.shape[0])],
+                a_max=[5 * self.action_noise
+                       for _ in range(actions.shape[0])],
+            ),
+            a_min=[self.ac_space.low for _ in range(actions.shape[0])],
+            a_max=[self.ac_space.high for _ in range(actions.shape[0])],
+        )
+
         # Perform the critic updates.
         critic_loss, grads0, *_ = self.sess.run(
             [self.critic_loss, self.critic_grads[0],
@@ -734,17 +756,15 @@ class FeedForwardPolicy(ActorCriticPolicy):
             action = self.sess.run(self.actor_tf, {self.obs_ph: obs})
 
             if apply_noise:
-                action_range = (self.ac_space.high - self.ac_space.low) / 2
-                # convert noise percentage to absolute value
-                noise = self.noise * action_range
-                # apply Ornstein-Uhlenbeck process
-                noise *= np.maximum(
-                    np.exp(-0.8*kwargs['total_steps']/1e6), 0.05)
                 # compute noisy action
                 action += np.clip(
-                    normal(loc=0, scale=noise, size=action.shape),
-                    a_min=0.5 * action_range,
-                    a_max=0.5 * action_range)
+                    np.random.normal(
+                        loc=[0 for _ in range(self.ac_space.shape[0])],
+                        scale=self.action_noise,
+                    ),
+                    a_min=-5 * self.action_noise,
+                    a_max=5 * self.action_noise,
+                )
 
             # clip by bounds
             action = np.clip(action, self.ac_space.low, self.ac_space.high)
@@ -984,7 +1004,7 @@ class GoalDirectedPolicy(ActorCriticPolicy):
                  verbose,
                  tau,
                  gamma,
-                 noise=0.1,
+                 noise=0.05,
                  layer_norm=False,
                  reuse=False,
                  layers=None,
