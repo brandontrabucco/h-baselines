@@ -690,10 +690,12 @@ class FeedForwardPolicy(ActorCriticPolicy):
             }
         )
 
-        # Perform the actor updates.
         if update_actor:
+            # Perform the actor updates and run target soft update operation.
             actor_loss, *_ = self.sess.run(
-                [self.actor_loss, self.actor_optimizer],
+                [self.actor_loss,
+                 self.actor_optimizer,
+                 self.target_soft_updates],
                 feed_dict={
                     self.obs_ph: obs0,
                     self.q_gradient_input: grads0[0]
@@ -701,9 +703,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
             )
         else:
             actor_loss = 0
-
-        # Run target soft update operation.
-        self.sess.run(self.target_soft_updates)
 
         return critic_loss, actor_loss
 
@@ -719,20 +718,13 @@ class FeedForwardPolicy(ActorCriticPolicy):
             obs = np.concatenate((obs, context_obs), axis=1)
 
         if random_actions:
-            action = self.ac_space.sample()
+            action = np.array([self.ac_space.sample()])
         else:
             action = self.sess.run(self.actor_tf, {self.obs_ph: obs})
 
             if apply_noise:
                 # compute noisy action
-                action += np.clip(
-                    np.random.normal(
-                        loc=[0 for _ in range(self.ac_space.shape[0])],
-                        scale=self.action_noise,
-                    ),
-                    a_min=-5 * self.action_noise,
-                    a_max=5 * self.action_noise,
-                )
+                action += np.random.normal(0, self.noise, action.shape)
 
             # clip by bounds
             action = np.clip(action, self.ac_space.low, self.ac_space.high)

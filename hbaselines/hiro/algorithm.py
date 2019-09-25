@@ -534,7 +534,12 @@ class TD3(object):
             return tf.compat.v1.get_collection(
                 tf.compat.v1.GraphKeys.TRAINABLE_VARIABLES)
 
-    def _policy(self, obs, apply_noise=True, compute_q=True, **kwargs):
+    def _policy(self,
+                obs,
+                apply_noise=True,
+                compute_q=True,
+                random_actions=False,
+                **kwargs):
         """Get the actions and critic output, from a given observation.
 
         Parameters
@@ -557,6 +562,7 @@ class TD3(object):
 
         action = self.policy_tf.get_action(
             obs, apply_noise,
+            random_actions=random_actions,
             total_steps=self.total_steps,
             time=kwargs["episode_step"],
             context_obs=kwargs["context"])
