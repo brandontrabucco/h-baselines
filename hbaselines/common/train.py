@@ -11,7 +11,6 @@ DEFAULT_TD3_HP = dict(
     actor_update_freq=2,
     tau=0.005,
     batch_size=128,
-    critic_l2_reg=0.01,
     actor_lr=3e-4,
     critic_lr=3e-4,
     clip_norm=None,
@@ -37,7 +36,6 @@ def get_hyperparameters(args):
         "actor_update_freq": args.actor_update_freq,
         "tau": args.tau,
         "batch_size": args.batch_size,
-        "critic_l2_reg": args.critic_l2_reg,
         "actor_lr": args.actor_lr,
         "critic_lr": args.critic_lr,
         "clip_norm": args.clip_norm,
@@ -126,10 +124,6 @@ def create_td3_parser(parser):
                         type=float,
                         default=DEFAULT_TD3_HP['critic_lr'],
                         help='the critic learning rate')
-    parser.add_argument('--critic_l2_reg',
-                        type=float,
-                        default=DEFAULT_TD3_HP['critic_l2_reg'],
-                        help='l2 regularizer coefficient')
     parser.add_argument('--clip_norm',
                         type=float,
                         default=DEFAULT_TD3_HP['clip_norm'],
