@@ -164,8 +164,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
         actor learning rate
     critic_lr : float
         critic learning rate
-    clip_norm : float
-        clip the gradients (disabled if None)
     verbose : int
         the verbosity level: 0 none, 1 training information, 2 tensorflow debug
     reuse : bool
@@ -247,7 +245,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
                  batch_size,
                  actor_lr,
                  critic_lr,
-                 clip_norm,
                  verbose,
                  tau,
                  gamma,
@@ -278,8 +275,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
             actor learning rate
         critic_lr : float
             critic learning rate
-        clip_norm : float
-            clip the gradients (disabled if None)
         verbose : int
             the verbosity level: 0 none, 1 training information, 2 tensorflow
             debug
@@ -319,7 +314,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
         self.batch_size = batch_size
         self.actor_lr = actor_lr
         self.critic_lr = critic_lr
-        self.clip_norm = clip_norm
         self.verbose = verbose
         self.reuse = reuse
         self.layers = layers or [400, 300]
@@ -959,7 +953,6 @@ class GoalDirectedPolicy(ActorCriticPolicy):
                  batch_size,
                  actor_lr,
                  critic_lr,
-                 clip_norm,
                  verbose,
                  tau,
                  gamma,
@@ -997,8 +990,6 @@ class GoalDirectedPolicy(ActorCriticPolicy):
             actor learning rate
         critic_lr : float
             critic learning rate
-        clip_norm : float
-            clip the gradients (disabled if None)
         verbose : int
             the verbosity level: 0 none, 1 training information, 2 tensorflow
             debug
@@ -1136,7 +1127,6 @@ class GoalDirectedPolicy(ActorCriticPolicy):
                 batch_size=batch_size,
                 actor_lr=actor_lr,
                 critic_lr=critic_lr,
-                clip_norm=clip_norm,
                 verbose=verbose,
                 tau=tau,
                 gamma=gamma,
@@ -1193,7 +1183,6 @@ class GoalDirectedPolicy(ActorCriticPolicy):
                 batch_size=batch_size,
                 actor_lr=actor_lr,
                 critic_lr=critic_lr,
-                clip_norm=clip_norm,
                 verbose=verbose,
                 tau=tau,
                 gamma=gamma,

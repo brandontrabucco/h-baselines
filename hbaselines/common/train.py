@@ -13,7 +13,6 @@ DEFAULT_TD3_HP = dict(
     batch_size=128,
     actor_lr=3e-4,
     critic_lr=3e-4,
-    clip_norm=None,
     reward_scale=1.,
     render=False,
     render_eval=False,
@@ -38,7 +37,6 @@ def get_hyperparameters(args):
         "batch_size": args.batch_size,
         "actor_lr": args.actor_lr,
         "critic_lr": args.critic_lr,
-        "clip_norm": args.clip_norm,
         "reward_scale": args.reward_scale,
         "render": args.render,
         "buffer_size": int(args.buffer_size),
@@ -124,10 +122,6 @@ def create_td3_parser(parser):
                         type=float,
                         default=DEFAULT_TD3_HP['critic_lr'],
                         help='the critic learning rate')
-    parser.add_argument('--clip_norm',
-                        type=float,
-                        default=DEFAULT_TD3_HP['clip_norm'],
-                        help='clip the gradients (disabled if None)')
     parser.add_argument('--nb_train_steps',
                         type=int,
                         default=DEFAULT_TD3_HP['nb_train_steps'],

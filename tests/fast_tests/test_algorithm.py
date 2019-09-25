@@ -44,7 +44,6 @@ class TestTD3(unittest.TestCase):
             'batch_size': 128,
             'actor_lr': 1e-4,
             'critic_lr': 1e-3,
-            'clip_norm': None,
             'reward_scale': 1.,
             'render': False,
             'render_eval': False,
@@ -73,7 +72,6 @@ class TestTD3(unittest.TestCase):
         self.assertEqual(alg.batch_size, self.init_parameters['batch_size'])
         self.assertEqual(alg.actor_lr, self.init_parameters['actor_lr'])
         self.assertEqual(alg.critic_lr, self.init_parameters['critic_lr'])
-        self.assertEqual(alg.clip_norm, self.init_parameters['clip_norm'])
         self.assertEqual(alg.reward_scale,
                          self.init_parameters['reward_scale'])
         self.assertEqual(alg.render, self.init_parameters['render'])

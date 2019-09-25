@@ -91,8 +91,6 @@ class TD3(object):
         the actor learning rate
     critic_lr : float
         the critic learning rate
-    clip_norm : float
-        clip the gradients (disabled if None)
     reward_scale : float
         the value the reward should be scaled by
     render : bool
@@ -205,7 +203,6 @@ class TD3(object):
                  batch_size=100,
                  actor_lr=1e-4,
                  critic_lr=1e-3,
-                 clip_norm=None,
                  reward_scale=1.,
                  render=False,
                  render_eval=False,
@@ -255,8 +252,6 @@ class TD3(object):
             the actor learning rate
         critic_lr : float
             the critic learning rate
-        clip_norm : float
-            clip the gradients (disabled if None)
         reward_scale : float
             the value the reward should be scaled by
         render : bool
@@ -306,7 +301,6 @@ class TD3(object):
         self.batch_size = batch_size
         self.actor_lr = actor_lr
         self.critic_lr = critic_lr
-        self.clip_norm = clip_norm
         self.reward_scale = reward_scale
         self.render = render
         self.render_eval = render_eval
@@ -495,7 +489,6 @@ class TD3(object):
                 batch_size=self.batch_size,
                 actor_lr=self.actor_lr,
                 critic_lr=self.critic_lr,
-                clip_norm=self.clip_norm,
                 verbose=self.verbose,
                 tau=self.tau,
                 gamma=self.gamma,
