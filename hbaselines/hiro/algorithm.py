@@ -87,6 +87,10 @@ class TD3(object):
         the soft update coefficient (keep old values, between 0 and 1)
     batch_size : int
         the size of the batch for learning the policy
+    use_huber : bool
+        specifies whether to use the huber distance function as the loss for
+        the critic. If set to False, the mean-squared error metric is used
+        instead
     actor_lr : float
         the actor learning rate
     critic_lr : float
@@ -208,6 +212,7 @@ class TD3(object):
                  render_eval=False,
                  memory_limit=None,
                  buffer_size=50000,
+                 use_huber=False,
                  verbose=0,
                  meta_period=10,
                  relative_goals=False,
@@ -260,6 +265,10 @@ class TD3(object):
             enable rendering of the evaluation environment
         buffer_size : int
             the max number of transitions to store
+        use_huber : bool
+            specifies whether to use the huber distance function as the loss
+            for the critic. If set to False, the mean-squared error metric is
+            used instead
         verbose : int
             the verbosity level: 0 none, 1 training information, 2 tensorflow
             debug
@@ -299,6 +308,7 @@ class TD3(object):
         self.actor_update_freq = actor_update_freq
         self.tau = tau
         self.batch_size = batch_size
+        self.use_huber = use_huber
         self.actor_lr = actor_lr
         self.critic_lr = critic_lr
         self.reward_scale = reward_scale
@@ -492,6 +502,7 @@ class TD3(object):
                 verbose=self.verbose,
                 tau=self.tau,
                 gamma=self.gamma,
+                use_huber=self.use_huber,
                 **additional_params
             )
 

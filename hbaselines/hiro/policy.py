@@ -253,7 +253,7 @@ class FeedForwardPolicy(ActorCriticPolicy):
                  reuse=False,
                  layers=None,
                  act_fun=tf.nn.relu,
-                 use_huber=True,  # TODO: add to input parameters
+                 use_huber=True,
                  scope=None):
         """Instantiate the feed-forward neural network policy.
 
@@ -1122,9 +1122,9 @@ class GoalDirectedPolicy(ActorCriticPolicy):
                 reuse=reuse,
                 layers=layers,
                 act_fun=act_fun,
+                use_huber=use_huber,
                 scope="Manager",
                 noise=noise,
-                use_huber=use_huber,
             )
 
         # previous observation by the Manager
@@ -1178,9 +1178,9 @@ class GoalDirectedPolicy(ActorCriticPolicy):
                 reuse=reuse,
                 layers=layers,
                 act_fun=act_fun,
+                use_huber=use_huber,
                 scope="Worker",
                 noise=noise,
-                use_huber=use_huber,
             )
 
         # remove the last element to compute the reward FIXME
