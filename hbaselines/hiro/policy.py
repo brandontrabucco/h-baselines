@@ -178,6 +178,11 @@ class FeedForwardPolicy(ActorCriticPolicy):
         scaling term to the range of the action space, that is subsequently
         used as the standard deviation of Gaussian noise added to the action if
         `apply_noise` is set to True in `get_action`
+    target_policy_noise : float
+        standard deviation term to the noise from the output of the target
+        actor policy. See TD3 paper for more.
+    target_noise_clip : float
+        clipping term for the noise injected in the target actor policy
     layer_norm : bool
         enable layer normalisation
     activ : tf.nn.*
@@ -249,6 +254,8 @@ class FeedForwardPolicy(ActorCriticPolicy):
                  tau,
                  gamma,
                  noise=0.1,
+                 target_policy_noise=0.2,
+                 target_noise_clip=0.5,
                  layer_norm=False,
                  reuse=False,
                  layers=None,
@@ -285,7 +292,12 @@ class FeedForwardPolicy(ActorCriticPolicy):
         noise : float
             scaling term to the range of the action space, that is subsequently
             used as the standard deviation of Gaussian noise added to the
-            action if `apply_noise` is set to True in `get_action`.
+            action if `apply_noise` is set to True in `get_action`
+        target_policy_noise : float
+            standard deviation term to the noise from the output of the target
+            actor policy. See TD3 paper for more.
+        target_noise_clip : float
+            clipping term for the noise injected in the target actor policy
         layer_norm : bool
             enable layer normalisation
         reuse : bool
@@ -320,6 +332,8 @@ class FeedForwardPolicy(ActorCriticPolicy):
         self.tau = tau
         self.gamma = gamma
         self.noise = noise
+        self.target_policy_noise = target_policy_noise
+        self.target_noise_clip = target_noise_clip
         self.layer_norm = layer_norm
         self.activ = act_fun
         self.use_huber = use_huber
@@ -394,21 +408,20 @@ class FeedForwardPolicy(ActorCriticPolicy):
             ]
 
         with tf.variable_scope("target", reuse=False):
+            # create the target actor policy
             actor_target = self.make_actor(self.obs1_ph)
-
-            # TODO: add as input parameters
-            self.target_policy_noise = 0.2
-            self.target_noise_clip = 0.5
 
             # smooth target policy by adding clipped noise to target actions
             target_noise = tf.random_normal(
                 tf.shape(actor_target), stddev=self.target_policy_noise)
             target_noise = tf.clip_by_value(
                 target_noise, -self.target_noise_clip, self.target_noise_clip)
+
             # clip the noisy action to remain in the bounds [-1, 1]
             noisy_actor_target = tf.clip_by_value(
                 actor_target + target_noise, -1, 1)
 
+            # create the target critic policies
             critic_target = [
                 self.make_critic(self.obs1_ph, noisy_actor_target,
                                  scope="qf_{}".format(i))
@@ -944,7 +957,9 @@ class GoalDirectedPolicy(ActorCriticPolicy):
                  verbose,
                  tau,
                  gamma,
-                 noise=0.05,
+                 noise=0.1,
+                 target_policy_noise=0.2,
+                 target_noise_clip=0.5,
                  layer_norm=False,
                  reuse=False,
                  layers=None,
@@ -989,6 +1004,11 @@ class GoalDirectedPolicy(ActorCriticPolicy):
             scaling term to the range of the action space, that is subsequently
             used as the standard deviation of Gaussian noise added to the
             action if `apply_noise` is set to True in `get_action`.
+        target_policy_noise : float
+            standard deviation term to the noise from the output of the target
+            actor policy. See TD3 paper for more.
+        target_noise_clip : float
+            clipping term for the noise injected in the target actor policy
         layer_norm : bool
             enable layer normalisation
         reuse : bool
@@ -1125,6 +1145,8 @@ class GoalDirectedPolicy(ActorCriticPolicy):
                 use_huber=use_huber,
                 scope="Manager",
                 noise=noise,
+                target_policy_noise=target_policy_noise,
+                target_noise_clip=target_noise_clip,
             )
 
         # previous observation by the Manager
@@ -1181,6 +1203,8 @@ class GoalDirectedPolicy(ActorCriticPolicy):
                 use_huber=use_huber,
                 scope="Worker",
                 noise=noise,
+                target_policy_noise=target_policy_noise,
+                target_noise_clip=target_noise_clip,
             )
 
         # remove the last element to compute the reward FIXME

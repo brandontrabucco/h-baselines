@@ -45,7 +45,6 @@ def run_exp(env, hp, steps, dir_name, evaluate, seed, i):
         log_interval=2000,
         seed=seed,
         exp_num=i,
-        start_timesteps=30000,
     )
 
     return None
