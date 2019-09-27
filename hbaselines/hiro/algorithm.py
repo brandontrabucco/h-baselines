@@ -143,24 +143,9 @@ class TD3(object):
         the number of rollout steps
     nb_eval_episodes : int
         the number of evaluation episodes
-<<<<<<< HEAD
     actor_update_freq : int
         number of training steps per actor policy update step. The critic
         policy is updated every training step.
-    tau : float
-        the soft update coefficient (keep old values, between 0 and 1)
-    batch_size : int
-        the size of the batch for learning the policy
-    use_huber : bool
-        specifies whether to use the huber distance function as the loss for
-        the critic. If set to False, the mean-squared error metric is used
-        instead
-    actor_lr : float
-        the actor learning rate
-    critic_lr : float
-        the critic learning rate
-=======
->>>>>>> 957ed4d892398275436836c5c9fbc475a5e32e5f
     reward_scale : float
         the value the reward should be scaled by
     render : bool
