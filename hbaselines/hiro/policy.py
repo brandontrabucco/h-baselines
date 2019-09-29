@@ -53,8 +53,14 @@ class ActorCriticPolicy(object):
         """
         raise NotImplementedError
 
-    def update(self):
+    def update(self, update_actor=True, **kwargs):
         """Perform a gradient update step.
+
+        Parameters
+        ----------
+        update_actor : bool
+            specifies whether to update the actor policy. The critic policy is
+            still updated if this value is set to False.
 
         Returns
         -------
@@ -65,21 +71,17 @@ class ActorCriticPolicy(object):
         """
         raise NotImplementedError
 
-    def get_action(self,
-                   obs,
-                   apply_noise=False,
-                   random_actions=False,
-                   **kwargs):
+    def get_action(self, obs, apply_noise, random_actions, **kwargs):
         """Call the actor methods to compute policy actions.
 
         Parameters
         ----------
         obs : array_like
             the observation
-        apply_noise : bool, optional
+        apply_noise : bool
             whether to add Gaussian noise to the output of the actor. Defaults
             to False
-        random_actions : bool, optional
+        random_actions : bool
             if set to True, actions are sampled randomly from the action space
             instead of being computed by the policy. This is used for
             exploration purposes.
@@ -493,8 +495,13 @@ class FeedForwardPolicy(ActorCriticPolicy):
         self.q_gradient_input = tf.compat.v1.placeholder(
             tf.float32, (None,) + self.ac_space.shape)
 
-        self.actor_optimizer = optimizer.minimize(
-            self.actor_loss, var_list=get_trainable_vars(scope_name))
+        self.actor_grads = tf.gradients(
+            self.actor_tf,
+            get_trainable_vars(scope_name),
+            -self.q_gradient_input)
+
+        self.actor_optimizer = optimizer.apply_gradients(
+            zip(self.actor_grads, get_trainable_vars(scope_name)))
 
     def _setup_critic_optimizer(self, scope):
         """Create the critic loss, gradient, and optimizer."""
@@ -625,8 +632,25 @@ class FeedForwardPolicy(ActorCriticPolicy):
 
         return qvalue_fn
 
-    def update(self, update_actor=True):
-        """See parent class."""
+    def update(self, update_actor=True, **kwargs):
+        """Perform a gradient update step.
+
+        **Note**; The target update soft updates occur at the same frequency as
+        the actor update frequencies.
+
+        Parameters
+        ----------
+        update_actor : bool
+            specifies whether to update the actor policy. The critic policy is
+            still updated if this value is set to False.
+
+        Returns
+        -------
+        float
+            critic loss
+        float
+            actor loss
+        """
         # Not enough samples in the replay buffer.
         if not self.replay_buffer.can_sample(self.batch_size):
             return 0, 0
@@ -676,36 +700,37 @@ class FeedForwardPolicy(ActorCriticPolicy):
         rewards = rewards.reshape(-1, 1)
         terminals1 = terminals1.reshape(-1, 1)
 
-        # update operations for the critic networks
-        step_ops = [self.critic_loss,
-                    self.critic_optimizer[0],
-                    self.critic_optimizer[1]]
+        # Perform the critic updates.
+        critic_loss, grads0, *_ = self.sess.run(
+            [self.critic_loss, self.critic_grads[0],
+             self.critic_optimizer[0], self.critic_optimizer[1]],
+            feed_dict={
+                self.obs_ph: obs0,
+                self.action_ph: actions,
+                self.rew_ph: rewards,
+                self.obs1_ph: obs1,
+                self.terminals1: terminals1
+            }
+        )
 
         if update_actor:
-            # actor updates and target soft update operation
-            step_ops += [self.actor_loss,
-                         self.actor_optimizer,
-                         self.target_soft_updates]
+            # Perform the actor updates.
+            actor_loss, *_ = self.sess.run(
+                [self.actor_loss, self.actor_optimizer],
+                feed_dict={
+                    self.obs_ph: obs0,
+                    self.q_gradient_input: grads0[0]
+                }
+            )
 
-        # perform the update operations and collect the critic loss
-        critic_loss, *_vals = self.sess.run(step_ops, feed_dict={
-            self.obs_ph: obs0,
-            self.action_ph: actions,
-            self.rew_ph: rewards,
-            self.obs1_ph: obs1,
-            self.terminals1: terminals1
-        })
-
-        # extract the actor loss
-        actor_loss = _vals[2] if update_actor else 0
+            # Run target soft update operation.
+            self.sess.run(self.target_soft_updates)
+        else:
+            actor_loss = 0
 
         return critic_loss, actor_loss
 
-    def get_action(self,
-                   obs,
-                   apply_noise=False,
-                   random_actions=False,
-                   **kwargs):
+    def get_action(self, obs, apply_noise, random_actions, **kwargs):
         """See parent class."""
         # Add the contextual observation, if applicable.
         context_obs = kwargs.get("context_obs")
@@ -718,11 +743,19 @@ class FeedForwardPolicy(ActorCriticPolicy):
             action = self.sess.run(self.actor_tf, {self.obs_ph: obs})
 
             if apply_noise:
-                # compute noisy action
-                action += np.random.normal(0, self.noise, action.shape)
+                # # convert noise percentage to absolute value
+                # noise = self.noise * (self.ac_space.high -
+                #                       self.ac_space.low) / 2
+                # # apply Ornstein-Uhlenbeck process
+                # noise *= np.maximum(
+                #     np.exp(-0.8*kwargs['total_steps']/1e6), 0.5)
 
-            # clip by bounds
-            action = np.clip(action, self.ac_space.low, self.ac_space.high)
+                # compute noisy action
+                if apply_noise:
+                    action += np.random.normal(0, self.noise, action.shape)
+
+                # clip by bounds
+                action = np.clip(action, self.ac_space.low, self.ac_space.high)
 
         return action
 
@@ -1251,10 +1284,37 @@ class GoalDirectedPolicy(ActorCriticPolicy):
         self.manager.initialize()
         self.worker.initialize()
         self.meta_reward = 0
-        self.i = 0  # FIXME: hacky
 
-    def update(self, update_actor=True):
-        """See parent class."""
+    def update(self, update_actor=True, **kwargs):
+        """Perform a gradient update step.
+
+        This is done both at the level of the Manager and Worker policies.
+
+        The kwargs argument for this method contains two additional terms:
+
+        * update_meta (bool): specifies whether to perform a gradient update
+          step for the meta-policy (i.e. Manager)
+        * update_meta_actor (bool): similar to the `update_policy` term, but
+          for the meta-policy. Note that, if `update_meta` is set to False,
+          this term is void.
+
+        **Note**; The target update soft updates for both the manager and the
+        worker policies occur at the same frequency as their respective actor
+        update frequencies.
+
+        Parameters
+        ----------
+        update_actor : bool
+            specifies whether to update the actor policy. The critic policy is
+            still updated if this value is set to False.
+
+        Returns
+        -------
+        (float, float)
+            manager critic loss, worker critic loss
+        (float, float)
+            manager actor loss, worker actor loss
+        """
         # Not enough samples in the replay buffer.
         if not self.replay_buffer.can_sample(self.batch_size):
             return (0, 0), (0, 0)
@@ -1268,19 +1328,17 @@ class GoalDirectedPolicy(ActorCriticPolicy):
             self._process_samples(samples)
 
         # Update the Manager policy.
-        if self.i % self.meta_period == 0:
+        if kwargs['update_meta']:
             m_critic_loss, m_actor_loss = self.manager.update_from_batch(
                 obs0=meta_obs0,
                 actions=meta_act,
                 rewards=meta_rew,
                 obs1=meta_obs1,
                 terminals1=meta_done,
-                # FIXME: replace 2 with freq variable
-                update_actor=self.i % (self.meta_period * 2) == 0,
+                update_actor=kwargs['update_meta_actor'],
             )
         else:
             m_critic_loss, m_actor_loss = 0, 0
-        self.i += 1
 
         # Update the Worker policy.
         w_critic_loss, w_actor_loss = self.worker.update_from_batch(
@@ -1395,29 +1453,26 @@ class GoalDirectedPolicy(ActorCriticPolicy):
             np.array(worker_rew_all), \
             np.array(worker_done_all)
 
-    def get_action(self,
-                   obs,
-                   apply_noise=False,
-                   random_action=False,
-                   **kwargs):
+    def get_action(self, obs, apply_noise, random_actions, **kwargs):
         """See parent class."""
+        # TODO: looks like this wasn't working originally...
         # Update the meta action, if the time period requires is.
         if len(self._observations) == 0:
-            if random_action:
+            if random_actions:
                 self.meta_action = self.manager.ac_space.sample()
             else:
                 self.meta_action = self.manager.get_action(
-                    obs, apply_noise, **kwargs)
+                    obs, apply_noise, random_actions, **kwargs)
 
-        if random_action:
+        # Return the worker action.
+        if random_actions:
             worker_action = self.worker.ac_space.sample()
         else:
             worker_action = self.worker.get_action(
-                obs, apply_noise,
+                obs, apply_noise, random_actions,
                 context_obs=self.meta_action,
                 total_steps=kwargs['total_steps'])
 
-        # Return the worker action.
         return worker_action
 
     def value(self, obs, action=None, **kwargs):
@@ -1574,7 +1629,12 @@ class GoalDirectedPolicy(ActorCriticPolicy):
         * _sample_best_meta_action(self):
         """
         # Action a policy would perform given a specific observation / goal.
-        pred_actions = self.worker.get_action(worker_obs, context_obs=goals)
+        pred_actions = self.worker.get_action(
+            worker_obs,
+            context_obs=goals,
+            apply_noise=False,
+            random_actions=False,
+        )
 
         # Normalize the error based on the range of applicable goals.
         goal_space = self.manager.ac_space
