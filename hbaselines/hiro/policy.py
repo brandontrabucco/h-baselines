@@ -193,9 +193,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
         specifies whether to use the huber distance function as the loss for
         the critic. If set to False, the mean-squared error metric is used
         instead
-    action_noise : array_like
-        the std of the noise to be applied to the actions. Scaled by the action
-        range
     replay_buffer : hbaselines.hiro.replay_buffer.ReplayBuffer
         the replay buffer
     critic_target : tf.compat.v1.placeholder
@@ -341,9 +338,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
         self.use_huber = use_huber
         assert len(self.layers) >= 1, \
             "Error: must have at least one hidden layer for the policy."
-
-        # convert noise percentage to absolute value
-        self.action_noise = noise * (ac_space.high - ac_space.low) / 2
 
         # =================================================================== #
         # Step 1: Create a replay buffer object.                              #
