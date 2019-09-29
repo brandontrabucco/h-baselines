@@ -1502,7 +1502,7 @@ class GoalDirectedPolicy(ActorCriticPolicy):
         self.meta_reward += reward
 
         # Modify the previous meta observation whenever the action has changed.
-        if len(self._observations) == self.meta_period:
+        if len(self._observations) == 1:
             if kwargs.get("context_obs0") is not None:
                 self.prev_meta_obs = np.concatenate(
                     (obs0, kwargs["context_obs0"].flatten()), axis=0)
@@ -1511,10 +1511,10 @@ class GoalDirectedPolicy(ActorCriticPolicy):
 
         # Add a sample to the replay buffer.
         if len(self._observations) == self.meta_period or done:
-            # Add the last observation if about to reset.
-            if done:
-                self._observations.append(
-                    np.concatenate((obs1, self.meta_action.flatten()), axis=0))
+            # Add the last observation and reward since about to reset.
+            self._observations.append(
+                np.concatenate((obs1, self.meta_action.flatten()), axis=0))
+            self._worker_rewards.append(0)  # TODO: terminal?
 
             # Add the contextual observation, if applicable.
             if kwargs.get("context_obs1") is not None:
