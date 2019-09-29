@@ -1422,7 +1422,9 @@ class GoalDirectedPolicy(ActorCriticPolicy):
             worker_obs1 = worker_obses[indx_val + 1]
             worker_action = worker_actions[indx_val]
             worker_reward = worker_rewards[indx_val]
-            worker_done = worker_dones[indx_val]
+            # Worker done is determined by whether the sample is from the last
+            # step of the meta period.
+            worker_done = int(indx_val == len(worker_obses) - 2)
 
             # Add the new sample to the list of returned samples.
             meta_obs0_all.append(np.array(meta_obs0, copy=False))
@@ -1511,10 +1513,9 @@ class GoalDirectedPolicy(ActorCriticPolicy):
 
         # Add a sample to the replay buffer.
         if len(self._observations) == self.meta_period or done:
-            # Add the last observation and reward since about to reset.
+            # Add the last observation since about to reset.
             self._observations.append(
                 np.concatenate((obs1, self.meta_action.flatten()), axis=0))
-            self._worker_rewards.append(0)  # TODO: terminal?
 
             # Add the contextual observation, if applicable.
             if kwargs.get("context_obs1") is not None:
