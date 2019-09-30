@@ -1452,20 +1452,14 @@ class GoalDirectedPolicy(ActorCriticPolicy):
         # TODO: looks like this wasn't working originally...
         # Update the meta action, if the time period requires is.
         if kwargs["time"] % self.meta_period == 0:
-            if random_actions:
-                self.meta_action = self.manager.ac_space.sample()
-            else:
-                self.meta_action = self.manager.get_action(
-                    obs, apply_noise, random_actions, **kwargs)
+            self.meta_action = self.manager.get_action(
+                obs, apply_noise, random_actions, **kwargs)
 
         # Return the worker action.
-        if random_actions:
-            worker_action = self.worker.ac_space.sample()
-        else:
-            worker_action = self.worker.get_action(
-                obs, apply_noise, random_actions,
-                context_obs=self.meta_action,
-                total_steps=kwargs['total_steps'])
+        worker_action = self.worker.get_action(
+            obs, apply_noise, random_actions,
+            context_obs=self.meta_action,
+            total_steps=kwargs['total_steps'])
 
         return worker_action
 
