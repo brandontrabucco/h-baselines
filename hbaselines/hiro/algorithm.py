@@ -793,8 +793,7 @@ class TD3(object):
             reward = 0
             for _ in range(self.sims_per_step):
                 # Execute next action.
-                new_obs, new_reward, done, info = self.env.step(action)
-                reward += new_reward
+                new_obs, reward, done, info = self.env.step(action)
 
                 # Visualize the current step.
                 if self.render:
@@ -804,11 +803,6 @@ class TD3(object):
             if self.policy_kwargs.get("use_fingerprints", False):
                 fp = [self.total_steps / total_timesteps * 5]
                 new_obs = np.concatenate((new_obs, fp), axis=0)
-
-            # Add the contextual reward to the environment reward.
-            if hasattr(self.env, "current_context"):
-                reward += getattr(self.env, "contextual_reward")(
-                    self.obs, getattr(self.env, "current_context"), new_obs)
 
             # Store a transition in the replay buffer.
             self._store_transition(self.obs, action, reward, new_obs, done)
@@ -931,17 +925,10 @@ class TD3(object):
 
                 eval_r = 0
                 for _ in range(self.sims_per_step):
-                    obs, new_r, done, info = self.eval_env.step(eval_action)
-                    eval_r += new_r
+                    obs, eval_r, done, info = self.eval_env.step(eval_action)
 
                     if self.render_eval:
                         self.eval_env.render()
-
-                # Add the contextual reward to the environment reward.
-                if hasattr(self.eval_env, "current_context"):
-                    context_obs = getattr(self.eval_env, "current_context")
-                    eval_r += getattr(self.eval_env, "contextual_reward")(
-                        eval_obs, context_obs, obs)
 
                 # Update the previous step observation.
                 eval_obs = obs.copy()
