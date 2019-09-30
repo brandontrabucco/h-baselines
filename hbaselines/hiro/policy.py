@@ -531,12 +531,12 @@ class FeedForwardPolicy(ActorCriticPolicy):
             # create an optimizer object
             optimizer = tf.compat.v1.train.AdamOptimizer(self.critic_lr)
 
-            # add to the critic grads list  TODO: add grad clipping
+            # add to the critic grads list
             self.critic_grads.append(
                 tf.gradients(self.critic_tf[i], self.action_ph)
             )
 
-            # create the optimizer object  TODO: add grad clipping
+            # create the optimizer object
             self.critic_optimizer.append(optimizer.minimize(self.critic_loss))
 
     def make_actor(self, obs, reuse=False, scope="pi"):
@@ -1198,13 +1198,18 @@ class GoalDirectedPolicy(ActorCriticPolicy):
         # Part 2. Setup the Worker                                            #
         # =================================================================== #
 
+        # worker context space is the manager action space with bounds [-1, 1]
+        # (output from a tanh)
+        worker_co_space = Box(low=-1, high=1,
+                              shape=manager_ac_space.shape, dtype=np.float32)
+
         # Create the Worker policy.
         with tf.variable_scope("Worker"):
             self.worker = FeedForwardPolicy(
                 sess,
                 ob_space=ob_space,
                 ac_space=ac_space,
-                co_space=manager_ac_space,
+                co_space=worker_co_space,
                 buffer_size=buffer_size,
                 batch_size=batch_size,
                 actor_lr=actor_lr,
@@ -1440,9 +1445,8 @@ class GoalDirectedPolicy(ActorCriticPolicy):
 
     def get_action(self, obs, apply_noise, random_actions, **kwargs):
         """See parent class."""
-        # TODO: looks like this wasn't working originally...
         # Update the meta action, if the time period requires is.
-        if kwargs["time"] % self.meta_period == 0:
+        if len(self._observations) == 0:
             self.meta_action = self.manager.get_action(
                 obs, apply_noise, random_actions, **kwargs)
 
@@ -1493,7 +1497,7 @@ class GoalDirectedPolicy(ActorCriticPolicy):
         self.meta_reward += reward
 
         # Modify the previous meta observation whenever the action has changed.
-        if kwargs["time"] % self.meta_period == 0:
+        if len(self._observations) == 1:
             if kwargs.get("context_obs0") is not None:
                 self.prev_meta_obs = np.concatenate(
                     (obs0, kwargs["context_obs0"].flatten()), axis=0)
@@ -1501,11 +1505,10 @@ class GoalDirectedPolicy(ActorCriticPolicy):
                 self.prev_meta_obs = np.copy(obs0)
 
         # Add a sample to the replay buffer.
-        if (kwargs["time"] + 1) % self.meta_period == 0 or done:
+        if len(self._observations) == self.meta_period or done:
             # Add the last observation if about to reset.
-            if done:
-                self._observations.append(
-                    np.concatenate((obs1, self.meta_action.flatten()), axis=0))
+            self._observations.append(
+                np.concatenate((obs1, self.meta_action.flatten()), axis=0))
 
             # Add the contextual observation, if applicable.
             if kwargs.get("context_obs1") is not None:
@@ -1517,7 +1520,7 @@ class GoalDirectedPolicy(ActorCriticPolicy):
             # If this is the first time step, do not add the transition to the
             # meta replay buffer (it is not complete yet).
             if kwargs["time"] != 0:
-                # Store a sample in the Manager policy.
+                # Store a sample in the replay buffer.
                 self.replay_buffer.add(
                     obs_t=self._observations,
                     goal_t=self.meta_action.flatten(),
@@ -1525,7 +1528,7 @@ class GoalDirectedPolicy(ActorCriticPolicy):
                     reward_t=self._worker_rewards,
                     done=self._dones,
                     meta_obs_t=(self.prev_meta_obs, meta_obs1),
-                    meta_reward_t=0.1*self.meta_reward,
+                    meta_reward_t=self.meta_reward,
                 )
 
                 # Reset the meta reward.

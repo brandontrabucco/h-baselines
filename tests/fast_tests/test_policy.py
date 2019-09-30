@@ -293,7 +293,77 @@ class TestGoalDirectedPolicy(unittest.TestCase):
 
     def test_store_transition(self):
         """Test the `store_transition` method."""
-        pass
+        # Test for a meta period of 5.
+        policy_params = self.policy_params.copy()
+        policy_params['meta_period'] = 5
+        policy = GoalDirectedPolicy(**policy_params)
+
+        # set meta_reward to zero. This is usually covered by the initialize
+        # method
+        policy.meta_reward = 0
+
+        for i in range(10):
+            # update the goal every 5 steps t mimic what get_action does
+            if i % policy_params['meta_period'] == 0:
+                policy.meta_action = np.array(
+                    [[i] * policy.manager.ac_space.shape[0]])
+
+            policy.store_transition(
+                obs0=np.array(
+                    [2*i for _ in range(policy.manager.ob_space.shape[0])]),
+                action=np.array(
+                    [3*i for _ in range(policy.worker.ac_space.shape[0])]),
+                reward=4 * i,
+                obs1=np.array(
+                    [2 * (i + 1)
+                     for _ in range(policy.manager.ob_space.shape[0])]),
+                done=0,
+                time=i,  # TODO: temporary
+            )
+
+        for i, sample in enumerate(policy.replay_buffer.storage):
+            meta_obs, meta_action, meta_reward, worker_obses, worker_actions, \
+                worker_rewards, worker_dones = sample
+
+            meta_period = policy_params['meta_period']
+
+            # check the meta observations
+            meta_obs0, meta_obs1 = meta_obs
+            np.testing.assert_almost_equal(
+                meta_obs0,
+                [2 * meta_period * i
+                 for _ in range(policy.manager.ob_space.shape[0])]
+            )
+            np.testing.assert_almost_equal(
+                meta_obs1,
+                [2 * meta_period * (i + 1)
+                 for _ in range(policy.manager.ob_space.shape[0])]
+            )
+
+            # check the meta action
+            np.testing.assert_almost_equal(
+                meta_action,
+                [meta_period * i
+                 for _ in range(policy.manager.ac_space.shape[0])]
+            )
+
+            # check the meta reward
+            self.assertAlmostEqual(
+                meta_reward,
+                sum(4 * j for j in range(meta_period * i, meta_period * (i+1)))
+            )
+
+            # check the worker observations
+            # TODO
+
+            # check the worker actions
+            # TODO
+
+            # check the worker rewards
+            # TODO
+
+            # check the worker dones
+            # TODO
 
     def test_meta_period(self):
         """Verify that the rate of the Manager is dictated by meta_period."""
