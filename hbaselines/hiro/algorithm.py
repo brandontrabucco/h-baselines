@@ -790,10 +790,16 @@ class TD3(object):
                 episode_step=self.episode_step)
             assert action.shape == self.env.action_space.shape
 
+            # scaling terms to the output from the policy
+            ac_space = self.action_space
+            ac_means = (ac_space.high + ac_space.low) / 2.
+            ac_magnitudes = (ac_space.high - ac_space.low) / 2.
+            scaled_action = ac_means + ac_magnitudes * action
+
             reward = 0
             for _ in range(self.sims_per_step):
                 # Execute next action.
-                new_obs, reward, done, info = self.env.step(action)
+                new_obs, reward, done, info = self.env.step(scaled_action)
 
                 # Visualize the current step.
                 if self.render:
@@ -923,9 +929,15 @@ class TD3(object):
                     context=[getattr(self.eval_env, "current_context", None)],
                     episode_step=eval_episode_step)
 
+                # scaling terms to the output from the policy
+                ac_space = self.action_space
+                ac_means = (ac_space.high + ac_space.low) / 2.
+                ac_magnitudes = (ac_space.high - ac_space.low) / 2.
+                scaled_action = ac_means + ac_magnitudes * eval_action
+
                 eval_r = 0
                 for _ in range(self.sims_per_step):
-                    obs, eval_r, done, info = self.eval_env.step(eval_action)
+                    obs, eval_r, done, info = self.eval_env.step(scaled_action)
 
                     if self.render_eval:
                         self.eval_env.render()

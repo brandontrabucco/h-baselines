@@ -576,12 +576,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
                 kernel_initializer=tf.random_uniform_initializer(
                     minval=-3e-3, maxval=3e-3)))
 
-            # scaling terms to the output from the policy
-            ac_means = (self.ac_space.high + self.ac_space.low) / 2.
-            ac_magnitudes = (self.ac_space.high - self.ac_space.low) / 2.
-
-            policy = ac_means + ac_magnitudes * policy
-
         return policy
 
     def make_critic(self, obs, action, reuse=False, scope="qf"):
@@ -732,24 +726,21 @@ class FeedForwardPolicy(ActorCriticPolicy):
             obs = np.concatenate((obs, context_obs), axis=1)
 
         if random_actions:
-            action = np.array([self.ac_space.sample()])
+            action = np.array([np.random.normal(-1, 1, self.ac_space.shape)])
         else:
             action = self.sess.run(self.actor_tf, {self.obs_ph: obs})
 
             if apply_noise:
-                # # convert noise percentage to absolute value
-                # noise = self.noise * (self.ac_space.high -
-                #                       self.ac_space.low) / 2
                 # # apply Ornstein-Uhlenbeck process
-                # noise *= np.maximum(
+                # noise = self.noise * np.maximum(
                 #     np.exp(-0.8*kwargs['total_steps']/1e6), 0.5)
 
                 # compute noisy action
                 if apply_noise:
                     action += np.random.normal(0, self.noise, action.shape)
 
-                # clip by bounds
-                action = np.clip(action, self.ac_space.low, self.ac_space.high)
+            # clip by bounds
+            action = np.clip(action, -1, 1)
 
         return action
 
@@ -1472,18 +1463,21 @@ class GoalDirectedPolicy(ActorCriticPolicy):
         # Normalize some variables so that a scaled version of the worker
         # reward can be computed with respect to the meta action range
         state_indices = list(np.arange(0, self.manager.ac_space.shape[0]))
-        meta_ac_range = (self.manager.ac_space.high -
-                         self.manager.ac_space.low) / 2
+        ac_space = self.manager.ac_space
+        ac_means = (ac_space.high + ac_space.low) / 2.
+        ac_magnitudes = (ac_space.high - ac_space.low) / 2.
         rew_obs0 = obs0.copy()
-        rew_obs0[state_indices] = rew_obs0[state_indices] / meta_ac_range
+        rew_obs0[state_indices] = \
+            (rew_obs0[state_indices] - ac_means) / ac_magnitudes
         rew_obs1 = obs1.copy()
-        rew_obs1[state_indices] = rew_obs1[state_indices] / meta_ac_range
+        rew_obs1[state_indices] = \
+            (rew_obs1[state_indices] - ac_means) / ac_magnitudes
 
         # Compute the worker reward and append it to the list of rewards.
         self._worker_rewards.append(
             self.worker_reward(
                 rew_obs0,
-                self.meta_action.flatten() / meta_ac_range,
+                self.meta_action.flatten(),
                 rew_obs1
             )
         )
