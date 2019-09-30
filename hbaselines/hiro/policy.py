@@ -1469,9 +1469,23 @@ class GoalDirectedPolicy(ActorCriticPolicy):
 
     def store_transition(self, obs0, action, reward, obs1, done, **kwargs):
         """See parent class."""
+        # Normalize some variables so that a scaled version of the worker
+        # reward can be computed with respect to the meta action range
+        state_indices = list(np.arange(0, self.manager.ac_space.shape[0]))
+        meta_ac_range = (self.manager.ac_space.high -
+                         self.manager.ac_space.low) / 2
+        rew_obs0 = obs0.copy()
+        rew_obs0[state_indices] = rew_obs0[state_indices] / meta_ac_range
+        rew_obs1 = obs1.copy()
+        rew_obs1[state_indices] = rew_obs1[state_indices] / meta_ac_range
+
         # Compute the worker reward and append it to the list of rewards.
         self._worker_rewards.append(
-            self.worker_reward(obs0, self.meta_action.flatten(), obs1)
+            self.worker_reward(
+                rew_obs0,
+                self.meta_action.flatten() / meta_ac_range,
+                rew_obs1
+            )
         )
 
         # Add the environmental observations and done masks, and the worker
