@@ -1413,7 +1413,7 @@ class GoalDirectedPolicy(ActorCriticPolicy):
             meta_obs0, meta_obs1 = meta_obs
 
             # The meta done value corresponds to the last done value.
-            meta_done = worker_dones[-1]
+            meta_done = 0  # worker_dones[-1]
 
             # Sample one obs0/obs1/action/reward from the list of per-meta-
             # period variables.
@@ -1424,7 +1424,8 @@ class GoalDirectedPolicy(ActorCriticPolicy):
             worker_reward = worker_rewards[indx_val]
             # Worker done is determined by whether the sample is from the last
             # step of the meta period.
-            worker_done = int(indx_val == len(worker_obses) - 2)
+            worker_done = 0
+            # worker_done = int(indx_val == (len(worker_obses) - 2))
 
             # Add the new sample to the list of returned samples.
             meta_obs0_all.append(np.array(meta_obs0, copy=False))
@@ -1454,20 +1455,14 @@ class GoalDirectedPolicy(ActorCriticPolicy):
         # TODO: looks like this wasn't working originally...
         # Update the meta action, if the time period requires is.
         if len(self._observations) == 0:
-            if random_actions:
-                self.meta_action = self.manager.ac_space.sample()
-            else:
-                self.meta_action = self.manager.get_action(
-                    obs, apply_noise, random_actions, **kwargs)
+            self.meta_action = self.manager.get_action(
+                obs, apply_noise, random_actions, **kwargs)
 
         # Return the worker action.
-        if random_actions:
-            worker_action = self.worker.ac_space.sample()
-        else:
-            worker_action = self.worker.get_action(
-                obs, apply_noise, random_actions,
-                context_obs=self.meta_action,
-                total_steps=kwargs['total_steps'])
+        worker_action = self.worker.get_action(
+            obs, apply_noise, random_actions,
+            context_obs=self.meta_action,
+            total_steps=kwargs['total_steps'])
 
         return worker_action
 
