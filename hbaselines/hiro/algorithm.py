@@ -634,7 +634,7 @@ class TD3(object):
             print('Using agent with the following configuration:')
             print(str(self.__dict__.items()))
 
-        # Initialize class variables.
+        # Initialize class variables.?
         steps_incr = 0
         self.episode_reward = 0
         self.episode_step = 0
