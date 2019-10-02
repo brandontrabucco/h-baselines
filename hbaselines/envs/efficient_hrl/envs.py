@@ -155,9 +155,6 @@ class UniversalAntMazeEnv(AntMazeEnv):
             )
             info["is_success"] = abs(dist) < DISTANCE_THRESHOLD * REWARD_SCALE
 
-            # replace the reward with the distance term
-            rew = dist
-
         # Check if the time horizon has been met.
         self.step_number += 1
         done = done or self.step_number == self.horizon

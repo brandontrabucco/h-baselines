@@ -415,10 +415,10 @@ class FeedForwardPolicy(ActorCriticPolicy):
 
             # clip the noisy action to remain in the bounds [-1, 1]
             noisy_actor_target = tf.clip_by_value(
-                actor_target + target_noise,
-                self.ac_space.low,
-                self.ac_space.high
-            )
+                actor_target + target_noise, -1, 1)
+            #     self.ac_space.low,
+            #     self.ac_space.high
+            # )
 
             # create the target critic policies
             critic_target = [
@@ -728,7 +728,7 @@ class FeedForwardPolicy(ActorCriticPolicy):
             obs = np.concatenate((obs, context_obs), axis=1)
 
         if random_actions:
-            action = np.array([np.random.normal(-1, 1, self.ac_space.shape)])
+            action = np.array([np.random.uniform(-1, 1, self.ac_space.shape)])
         else:
             action = self.sess.run(self.actor_tf, {self.obs_ph: obs})
 
