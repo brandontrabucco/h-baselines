@@ -92,10 +92,11 @@ class PPO(RLAlgorithm):
                  gamma=0.99,
                  timesteps_per_batch=2048,
                  clip_param=0.2,
+                 vf_coeff=0.5,
                  entcoeff=0.01,
-                 optim_epochs=10,
-                 optim_stepsize=3e-4,
-                 optim_batchsize=64,
+                 optim_epochs=4,
+                 optim_stepsize=2.5e-4,
+                 optim_batchsize=512,
                  lam=0.95,
                  schedule='constant',
                  verbose=0,
@@ -145,6 +146,7 @@ class PPO(RLAlgorithm):
                                   policy_kwargs=policy_kwargs)
 
         self.clip_param = clip_param
+        self.vf_coeff = vf_coeff
         self.entcoeff = entcoeff
         self.optim_epochs = optim_epochs
         self.optim_stepsize = optim_stepsize
@@ -247,8 +249,11 @@ class PPO(RLAlgorithm):
                 # PPO's pessimistic surrogate (L^CLIP)
                 if self.duel_vf:
                     vf1, vf2 = self.policy_pi.value_flat
-                    vf_loss = tf.reduce_mean(tf.square(vf1 - self.ret)) \
+                    q1, q2 = self.policy_pi.q_fn
+                    vf_loss = 0.5 * tf.reduce_mean(tf.square(vf1 - self.ret)) \
                         + tf.reduce_mean(tf.square(vf2 - self.ret))
+                    q_loss = 0.5 * tf.reduce_mean(tf.square(q1 - self.ret)) \
+                        + tf.reduce_mean(tf.square(q2 - self.ret))
                     pol_surr = - tf.reduce_mean(tf.minimum(surr1, surr2))
                     total_loss = pol_surr + pol_entpen
 
@@ -274,25 +279,36 @@ class PPO(RLAlgorithm):
                         vf_loss,
                         var_list=tf_util.get_trainable_vars("model")
                     )
+
+                    # create the optimization operation
+                    self.q_optimizer = optimizer.minimize(
+                        q_loss,
+                        var_list=tf_util.get_trainable_vars("model")
+                    )
                 else:
                     pol_surr = - tf.reduce_mean(tf.minimum(surr1, surr2))
-                    vf_loss = tf.reduce_mean(
+                    vf_loss = 0.5 * tf.reduce_mean(
                         tf.square(self.policy_pi.value_flat - self.ret))
-                    total_loss = pol_surr + pol_entpen + vf_loss
+                    total_loss = \
+                        pol_surr + pol_entpen + self.vf_coeff * vf_loss
 
-                    with tf.variable_scope("Adam_mpi", reuse=False):
-                        # create an optimizer object
-                        optimizer = tf.compat.v1.train.AdamOptimizer(
-                            self.optim_stepsize * self.lrmult, epsilon=1e-5)
-
-                        # create the optimization operation
-                        self.optimizer = optimizer.minimize(
-                            total_loss,
-                            var_list=tf_util.get_trainable_vars("model")
-                        )
                 self.losses = [pol_surr, pol_entpen, vf_loss, meankl, meanent]
                 self.loss_names = ["pol_surr", "pol_entpen", "vf_loss", "kl",
                                    "ent"]
+                if self.duel_vf:
+                    self.losses.append(q_loss)
+                    self.loss_names.append("q_loss")
+
+                with tf.variable_scope("Adam_mpi", reuse=False):
+                    # create an optimizer object
+                    optimizer = tf.compat.v1.train.AdamOptimizer(
+                        self.optim_stepsize * self.lrmult, epsilon=1e-5)
+
+                    # create the optimization operation
+                    self.optimizer = optimizer.minimize(
+                        total_loss,
+                        var_list=tf_util.get_trainable_vars("model")
+                    )
 
                 tf.summary.scalar('entropy_loss', pol_entpen)
                 tf.summary.scalar('policy_gradient_loss', pol_surr)
@@ -346,13 +362,14 @@ class PPO(RLAlgorithm):
                          int(i * (optim_batchsize / len(dataset.data_map))))
                 # Run loss backprop with summary.
                 if self.duel_vf:
-                    summary, vf_grad, grad, *newlosses = self.sess.run(
-                        [self.summary, self.vf_optimizer, self.optimizer]
-                        + self.losses,
+                    summary, vf_grad, q_grad, grad, *newlosses = self.sess.run(
+                        [self.summary, self.vf_optimizer, self.q_optimizer,
+                         self.optimizer] + self.losses,
                         feed_dict={
                             self.policy_pi.obs_ph: batch["ob"],
                             self.old_pi.obs_ph: batch["ob"],
                             self.action_ph: batch["ac"],
+                            # self.policy_pi.ac_ph: batch["ac"],
                             self.atarg: batch["atarg"],
                             self.ret: batch["vtarg"],
                             self.lrmult: cur_lrmult,
@@ -384,6 +401,7 @@ class PPO(RLAlgorithm):
                     self.policy_pi.obs_ph: batch["ob"],
                     self.old_pi.obs_ph: batch["ob"],
                     self.action_ph: batch["ac"],
+                    # self.policy_pi.ac_ph: batch["ac"],
                     self.atarg: batch["atarg"],
                     self.ret: batch["vtarg"],
                     self.lrmult: cur_lrmult,

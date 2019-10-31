@@ -90,23 +90,27 @@ class FeedForwardPolicy(object):
         with tf.variable_scope("input", reuse=False):
             self.obs_ph = tf.compat.v1.placeholder(
                 tf.float32, shape=(None,) + ob_space.shape, name="obs_ph")
+            self.ac_ph = tf.compat.v1.placeholder(
+                tf.float32, shape=(None,) + ac_space.shape, name="ac_ph")
 
         with tf.variable_scope("model", reuse=reuse):
-            # Flatten the observations before passing to the policy.
-            flat_obs = tf.layers.flatten(self.obs_ph)
+            # # Flatten the observations before passing to the policy.
+            # flat_obs = tf.layers.flatten(self.obs_ph)
+            # flat_ac = tf.layers.flatten(self.ac_ph)
 
             # Create the actor mean and logstd, and the value function(s).
             if shared:
-                mean, logstd, value_fn = self._shared_mlp(
-                    flat_obs, self.layers, self.act_fun)
+                mean, logstd, value_fn, q_fn = self._shared_mlp(
+                    self.obs_ph, self.layers, self.act_fun)
             else:
-                mean, logstd, value_fn = self._non_shared_mlp(
-                    flat_obs, self.layers, self.act_fun, duel_vf)
+                mean, logstd, value_fn, q_fn = self._non_shared_mlp(
+                    self.obs_ph, self.ac_ph, self.layers, self.act_fun, duel_vf)
 
             self._mean = mean
             self._logstd = logstd
             self._std = tf.exp(self._logstd)
             self.value_fn = value_fn
+            self.q_fn = q_fn
             if duel_vf:
                 vf1, vf2 = self.value_fn
                 self.value_flat = (vf1[:, 0], vf2[:, 0])
@@ -166,20 +170,32 @@ class FeedForwardPolicy(object):
         """
         return self.sess.run(self.policy_proba, {self.obs_ph: obs})
 
-    def value(self, obs):
+    def value(self, obs, use_q=False):
         """Return the value for a single step.
 
         Parameters
         ----------
         obs : array_like
             The current observation of the environment
+        use_q : bool
+            specifies whether to use the Q-function to estimate the value
 
         Returns
         -------
         array_like
             The associated value of the action
         """
-        return self.sess.run(self.value_flat, {self.obs_ph: obs})
+        if use_q:
+            actions = [self.compute_action(obs) for _ in range(1)]
+            q_values = [
+                self.sess.run(self.q_fn,
+                              feed_dict={self.obs_ph: obs, self.ac_ph: ac})
+                for ac in actions
+            ]
+            return (np.mean([q for q, _ in q_values]),
+                    np.mean([q for _, q in q_values]))
+        else:
+            return self.sess.run(self.value_flat, {self.obs_ph: obs})
 
     def _shared_mlp(self, flat_obs, layers, act_fun):
         """Create a shared representation of the policy.
@@ -224,9 +240,9 @@ class FeedForwardPolicy(object):
                     factor=1.0 / 3.0, mode='FAN_IN', uniform=True),
             )
 
-        return self._gen_output_layers(latent, latent)
+        return self._gen_output_layers(latent, latent, None)
 
-    def _non_shared_mlp(self, flat_obs, layers, act_fun, duel_vf):
+    def _non_shared_mlp(self, obs, action, layers, act_fun, duel_vf):
         """Create a non-shared representation of the policy.
 
         In this case, the actor and critic policies do not share any hidden
@@ -234,8 +250,10 @@ class FeedForwardPolicy(object):
 
         Parameters
         ----------
-        flat_obs : tf.Tensor
+        obs : tf.Tensor
             The observations to base policy and value function on.
+        action : tf.Tensor
+            the action to base the Q-function in part on
         layers : list of int
             The number of units per layer.
         act_fun : tf.nn.*
@@ -254,8 +272,10 @@ class FeedForwardPolicy(object):
             output from the policy's critic / value function. Tuple if duel_vf
             is set to True
         """
-        vf_latent = (flat_obs, flat_obs) if duel_vf else flat_obs
-        pi_latent = flat_obs
+        vf_latent = (obs, obs) if duel_vf else obs
+        pi_latent = obs
+        q_latent = (tf.concat([obs, action], axis=-1),
+                    tf.concat([obs, action], axis=-1))
 
         # Iterate through and build separate hidden layers for the actor and
         # the critic.
@@ -265,16 +285,23 @@ class FeedForwardPolicy(object):
                 vf1 = self._layer(vf1, layer, "vf1_{}".format(idx), act_fun)
                 vf2 = self._layer(vf2, layer, "vf2_{}".format(idx), act_fun)
                 vf_latent = (vf1, vf2)
+
+                q1, q2 = q_latent
+                q1 = self._layer(q1, layer, "q1_{}".format(idx), act_fun)
+                q2 = self._layer(q2, layer, "q2_{}".format(idx), act_fun)
+                q_latent = (q1, q2)
             else:
                 vf_latent = self._layer(
                     vf_latent, layer, "vf_{}".format(idx), act_fun)
 
+                q_latent = None
+
             pi_latent = self._layer(
                 pi_latent, layer, "pi_{}".format(idx), act_fun)
 
-        return self._gen_output_layers(pi_latent, vf_latent)
+        return self._gen_output_layers(pi_latent, vf_latent, q_latent)
 
-    def _gen_output_layers(self, pi_latent, vf_latent):
+    def _gen_output_layers(self, pi_latent, vf_latent, q_latent):
         """Create the necessary output layers.
 
         Parameters
@@ -304,9 +331,21 @@ class FeedForwardPolicy(object):
 
             # The output value function is a tuple of both value functions.
             value_fn = (vf1, vf2)
+
+            # Separate the tuple of Q-functions latents and use these as the
+            # inputs to final layer for each of the two value functions.
+            q1_latent, q2_latent = q_latent
+            q1 = self._layer(q1_latent, 1, 'q1_out', None)
+            q2 = self._layer(q2_latent, 1, 'q2_out', None)
+
+            # The output Q-function is a tuple of both Q-functions.
+            q_fn = (q1, q2)
         else:
             # Add an extra layer to produce the output from the value function.
             value_fn = self._layer(vf_latent, 1, 'vf_out', None)
+
+            # No Q-function in this case for now.
+            q_fn = None
 
         # Add an extra layer after the shared layers to produce the mean action
         # by the actor.
@@ -319,7 +358,7 @@ class FeedForwardPolicy(object):
             initializer=tf.zeros_initializer()
         )
 
-        return mean, logstd, value_fn
+        return mean, logstd, value_fn, q_fn
 
     @staticmethod
     def _layer(in_val, num_output, name, act_fun):
