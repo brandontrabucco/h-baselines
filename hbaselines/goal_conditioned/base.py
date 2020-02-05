@@ -1051,13 +1051,9 @@ class GoalConditionedPolicy(ActorCriticPolicy):
 
         # environment specific configurations for CEM
         self.obs_preproc = lambda o: o
-        self.obs_postproc = lambda o, p: p
+        self.obs_postproc = lambda o, p: o + p
         self.obs_postproc2 = lambda o: o
-
-        # environment specific configurations for CEM
-        self.targ_proc = lambda o, next_o: next_o
-        self.goals_postproc = lambda g, next_g: next_g
-        self.goals_postproc2 = lambda g: g
+        self.targ_proc = lambda o, next_o: next_o - o
 
         # placeholders for computing forward pass using CEM
         self.sy_cur_obs = tf.Variable(
@@ -1066,7 +1062,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             np.zeros(self.manager.ac_space.shape), dtype=tf.float32)
 
         # CEM optimizer for calculating actions
-        self.per = 1
+        self.per = 2
         self.steps_before_planning = 10000
         self.worker_cem = CEMOptimizer(
             self.meta_period * self.worker.ac_space.shape[0],
@@ -1077,7 +1073,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             upper_bound=np.tile(self.worker.ac_space.high, [self.meta_period]),
             tf_session=self.sess,
             epsilon=0.001,
-            alpha=0.25)
+            alpha=0.1)
         self.worker_cem.setup(self._compile_worker_cost, True)
         self.model.sess.run(tf.variables_initializer([self.sy_cur_obs]))
         self.model.sess.run(tf.variables_initializer([self.sy_cur_goals]))
@@ -1178,10 +1174,10 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             predictions = tf.gather_nd(predictions, idxs)
             predictions = tf.reshape(predictions, [-1, predictions.get_shape()[-1]])
 
-        next_goals = self.goal_transition_fn(obs, goals, predictions)
-
-        return self.obs_postproc(obs, predictions), \
-               self.goals_postproc(goals, next_goals)
+        return self.obs_postproc(obs, predictions), self.goal_transition_fn(
+            self.crop_to_goal(obs),
+            goals,
+            self.crop_to_goal(predictions))
 
     def _compile_worker_cost(self, ac_seqs, get_pred_trajs=False):
         """Compile the forward dynamics predictions and cost for CEM.
@@ -1234,7 +1230,6 @@ class GoalConditionedPolicy(ActorCriticPolicy):
                         cur_acs), [-1, self.num_particles])
 
                 next_obs = self.obs_postproc2(next_obs)
-                next_goals = self.goals_postproc2(next_goals)
                 pred_trajs = tf.concat([pred_trajs, next_obs[None]], axis=0)
                 return t + 1, total_cost + delta_cost, next_obs, next_goals, pred_trajs
 
@@ -1275,7 +1270,6 @@ class GoalConditionedPolicy(ActorCriticPolicy):
                         cur_acs), [-1, self.num_particles])
 
                 next_obs = self.obs_postproc2(next_obs)
-                next_goals = self.goals_postproc2(next_goals)
                 return t + 1, total_cost + delta_cost, next_obs, next_goals
 
             # predict into the future using static graphs
