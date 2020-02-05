@@ -4,6 +4,7 @@ import tensorflow_probability as tfp
 import numpy as np
 from copy import deepcopy
 import random
+from collections import deque
 from functools import reduce
 
 from hbaselines.fcnet.base import ActorCriticPolicy
@@ -348,6 +349,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
 
         # rewards provided by the policy to the worker
         self._worker_rewards = []
+        self._worker_rewards_history = deque(maxlen=100)
 
         # done masks at every time step for the worker
         self._dones = []
@@ -415,6 +417,20 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             self.worker_model = None
             self.worker_model_loss = None
             self.worker_model_optimizer = None
+
+        # for tensorboard logging of the worker rewards
+        with tf.compat.v1.variable_scope("Train"):
+            self.worker_rew_ph = tf.Variable(np.zeros([]), dtype=tf.float32)
+            self.worker_rew_history_ph = tf.Variable(np.zeros([]), dtype=tf.float32)
+
+        # for tensorboard logging of the worker rewards
+        tf.compat.v1.summary.scalar("Train/worker_return", self.worker_rew_ph)
+        tf.compat.v1.summary.scalar("Train/worker_return_history",
+                                    self.worker_rew_history_ph)
+
+        # for tensorboard logging of the worker rewards
+        self.sess.run(tf.variables_initializer([self.worker_rew_ph]))
+        self.sess.run(tf.variables_initializer([self.worker_rew_history_ph]))
 
         self._t = 0
 
@@ -546,40 +562,47 @@ class GoalConditionedPolicy(ActorCriticPolicy):
                 obs1=obs[:, self.goal_indices]
             )
 
-        #################################################
-        # CEM planning algorithm rather than model free #
-        #################################################
+        if not self.multistep_llp:
 
-        # while the model is still training explore randomly
-        if self._t < self.steps_before_planning:
-            return np.random.uniform(
-                self.worker.ac_space.low,
-                self.worker.ac_space.high,
-                self.worker.ac_space.shape)
+            worker_action = self.worker.get_action(
+                obs, self.meta_action, apply_noise, random_actions)
 
-        # if actions are already computed, use them
-        if self.ac_buf.shape[0] > 0:
+        else:
+
+            #################################################
+            # CEM planning algorithm rather than model free #
+            #################################################
+
+            # while the model is still training explore randomly
+            if self._t < self.steps_before_planning:
+                return np.random.uniform(
+                    self.worker.ac_space.low,
+                    self.worker.ac_space.high,
+                    self.worker.ac_space.shape)
+
+            # if actions are already computed, use them
+            if self.ac_buf.shape[0] > 0:
+                worker_action, self.ac_buf = self.ac_buf[0], self.ac_buf[1:]
+                return worker_action
+
+            # populate the current observation and the goal
+            self.sy_cur_obs.load(obs[0], self.model.sess)
+            self.sy_cur_goals.load(self.meta_action[0], self.model.sess)
+
+            # run cem to obtain solutions for optimal actions
+            soln = self.worker_cem.obtain_solution(self.prev_sol, self.init_var)
+
+            # store the previous solutions using CEM
+            self.prev_sol = np.concatenate([
+                np.copy(soln)[self.per * self.worker.ac_space.shape[0]:],
+                np.zeros(self.per * self.worker.ac_space.shape[0])])
+
+            # store the previous solutions using CEM
+            self.ac_buf = soln[:self.per * self.worker.ac_space.shape[0]].reshape(
+                -1, self.worker.ac_space.shape[0])
+
+            # pop the optimal actions off the action buffer
             worker_action, self.ac_buf = self.ac_buf[0], self.ac_buf[1:]
-            return worker_action
-
-        # populate the current observation and the goal
-        self.sy_cur_obs.load(obs[0], self.model.sess)
-        self.sy_cur_goals.load(self.meta_action[0], self.model.sess)
-
-        # run cem to obtain solutions for optimal actions
-        soln = self.worker_cem.obtain_solution(self.prev_sol, self.init_var)
-
-        # store the previous solutions using CEM
-        self.prev_sol = np.concatenate([
-            np.copy(soln)[self.per * self.worker.ac_space.shape[0]:],
-            np.zeros(self.per * self.worker.ac_space.shape[0])])
-
-        # store the previous solutions using CEM
-        self.ac_buf = soln[:self.per * self.worker.ac_space.shape[0]].reshape(
-            -1, self.worker.ac_space.shape[0])
-
-        # pop the optimal actions off the action buffer
-        worker_action, self.ac_buf = self.ac_buf[0], self.ac_buf[1:]
 
         return worker_action
 
@@ -656,6 +679,12 @@ class GoalConditionedPolicy(ActorCriticPolicy):
                         meta_reward_t=self.meta_reward,
                     )
 
+            # log the goal conditioned reward for the worker policy
+            mean_worker_rew = np.mean(self._worker_rewards)
+            self._worker_rewards_history.append(mean_worker_rew)
+            self.worker_rew_ph.load(mean_worker_rew, self.sess)
+            self.worker_rew_history_ph.load(np.mean(self._worker_rewards_history), self.sess)
+
             # Clear the worker rewards and actions, and the environmental
             # observation and reward.
             self.clear_memory()
@@ -682,7 +711,9 @@ class GoalConditionedPolicy(ActorCriticPolicy):
         self._worker_rewards = []
         self._dones = []
         self._meta_actions = []
-        self.ac_buf = np.array([]).reshape(0, self.worker.ac_space.shape[0])
+
+        if self.multistep_llp:
+            self.ac_buf = np.array([]).reshape(0, self.worker.ac_space.shape[0])
 
     def get_td_map(self):
         """See parent class."""
