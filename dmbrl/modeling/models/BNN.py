@@ -230,7 +230,8 @@ class BNN:
             epochs (int): Number of epochs (full network passes that will be done.
             hide_progress (bool): If True, hides the progress bar shown at the beginning of training.
 
-        Returns: None
+        Returns:
+            float: the loss of the final epoch of training
         """
         def shuffle_rows(arr):
             idxs = np.argsort(np.random.uniform(size=arr.shape), axis=-1)
@@ -252,6 +253,8 @@ class BNN:
             epoch_range = range(epochs)
         else:
             epoch_range = trange(epochs, unit="epoch(s)", desc="Network training")
+
+        loss = 0.0
         for _ in epoch_range:
             for batch_num in range(int(np.ceil(idxs.shape[-1] / batch_size))):
                 batch_idxs = idxs[:, batch_num * batch_size:(batch_num + 1) * batch_size]
@@ -262,32 +265,36 @@ class BNN:
             idxs = shuffle_rows(idxs)
             if not hide_progress:
                 if holdout_ratio < 1e-12:
+                    loss = self.sess.run(
+                        self.mse_loss,
+                        feed_dict={
+                            self.sy_train_in: inputs[idxs[:, :max_logging]],
+                            self.sy_train_targ: targets[idxs[:, :max_logging]]
+                        }
+                    )
                     epoch_range.set_postfix({
-                        "Training loss(es)": self.sess.run(
-                            self.mse_loss,
-                            feed_dict={
-                                self.sy_train_in: inputs[idxs[:, :max_logging]],
-                                self.sy_train_targ: targets[idxs[:, :max_logging]]
-                            }
-                        )
+                        "Training loss(es)": loss
                     })
                 else:
+                    training_loss = self.sess.run(
+                        self.mse_loss,
+                        feed_dict={
+                            self.sy_train_in: inputs[idxs[:, :max_logging]],
+                            self.sy_train_targ: targets[idxs[:, :max_logging]]
+                        }
+                    )
+                    loss = self.sess.run(
+                        self.mse_loss,
+                        feed_dict={
+                            self.sy_train_in: holdout_inputs,
+                            self.sy_train_targ: holdout_targets
+                        }
+                    )
                     epoch_range.set_postfix({
-                        "Training loss(es)": self.sess.run(
-                            self.mse_loss,
-                            feed_dict={
-                                self.sy_train_in: inputs[idxs[:, :max_logging]],
-                                self.sy_train_targ: targets[idxs[:, :max_logging]]
-                            }
-                        ),
-                        "Holdout loss(es)": self.sess.run(
-                            self.mse_loss,
-                            feed_dict={
-                                self.sy_train_in: holdout_inputs,
-                                self.sy_train_targ: holdout_targets
-                            }
-                        )
+                        "Training loss(es)": training_loss,
+                        "Holdout loss(es)": loss
                     })
+        return loss
 
     def predict(self, inputs, factored=False, *args, **kwargs):
         """Returns the distribution predicted by the model for each input vector in inputs.

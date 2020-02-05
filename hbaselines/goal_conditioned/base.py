@@ -1357,7 +1357,8 @@ class GoalConditionedPolicy(ActorCriticPolicy):
         Returns
         -------
         """
-        worker_model_loss = 0
+        worker_model_loss = 0.0
+
         if self._t > 0 and self._t % self.steps_before_planning == 0:
             _, _, _, _, _, worker_obs0, worker_obs1, worker_act, _, _, _ = \
                 self.replay_buffer.sample(
@@ -1369,7 +1370,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             new_train_targs = self.targ_proc(
                 worker_obs0[:, :-goal_dim], worker_obs1[:, :-goal_dim])
 
-            self.model.train(
+            worker_model_loss = self.model.train(
                 new_train_in, new_train_targs,
                 batch_size=32, epochs=100, hide_progress=False,
                 holdout_ratio=0.0, max_logging=5000)
