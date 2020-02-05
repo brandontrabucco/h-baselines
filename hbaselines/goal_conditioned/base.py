@@ -563,8 +563,8 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             return worker_action
 
         # populate the current observation and the goal
-        self.sy_cur_obs.load(obs, self.model.sess)
-        self.sy_cur_goals.load(self.meta_action, self.model.sess)
+        self.sy_cur_obs.load(obs[0], self.model.sess)
+        self.sy_cur_goals.load(self.meta_action[0], self.model.sess)
 
         # run cem to obtain solutions for optimal actions
         soln = self.worker_cem.obtain_solution(self.prev_sol, self.init_var)
@@ -995,20 +995,6 @@ class GoalConditionedPolicy(ActorCriticPolicy):
         # Part 1. Create the model and action optimization method.            #
         # =================================================================== #
 
-        # CEM optimizer for calculating actions
-        self.per = 1
-        self.steps_before_planning = 100000
-        self.worker_cem = CEMOptimizer(
-            self.meta_period * self.worker.ac_space.shape[0],
-            5,
-            500,
-            50,
-            lower_bound=np.tile(self.worker.ac_space.low, [self.meta_period]),
-            upper_bound=np.tile(self.worker.ac_space.high, [self.meta_period]),
-            tf_session=self.sess,
-            epsilon=0.001,
-            alpha=0.25)
-
         # create an ensemble of dynamics models
         self.prop_mode = 'TS1'
         self.model = BNN(DotMap(
@@ -1040,20 +1026,27 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             self.worker.ac_space.high -
             self.worker.ac_space.low) / 16, [self.meta_period])
 
-        # placeholders for computing forward pass using CEM
-        self.sy_cur_obs = tf.Variable(
-            np.zeros(self.worker.ob_space.shape), dtype=tf.float32)
-        self.sy_cur_goals = tf.Variable(
-            np.zeros(self.manager.ac_space.shape), dtype=tf.float32)
+        self.crop_to_goal = lambda g: tf.gather(
+            g,
+            tf.tile(tf.expand_dims(self.goal_indices, 0), [g.get_shape()[0], 1]),
+            batch_dims=1, axis=1)
 
         # environment specific configurations for CEM
         goal_loss_fn = tf.compat.v1.losses.mean_squared_error
-        self.obs_cost_fn = lambda obs, goals: goal_loss_fn(
-            obs, obs + goals) if self.relative_goals else goal_loss_fn(goals, obs)
+        if self.relative_goals:
+            self.obs_cost_fn = lambda obs, goals: goal_loss_fn(
+                self.crop_to_goal(obs) + goals,
+                self.crop_to_goal(obs))
+        else:
+            self.obs_cost_fn = lambda obs, goals: goal_loss_fn(
+                goals,
+                self.crop_to_goal(obs))
 
         # environment specific configurations for CEM
         ac_loss_fn = tf.compat.v1.losses.mean_squared_error
-        self.ac_cost_fn = lambda cur_ac: 0.0 * ac_loss_fn(cur_ac / 2., -cur_ac / 2.)
+        self.ac_cost_fn = lambda cur_ac: 0.0 * ac_loss_fn(
+            cur_ac / 2.,
+            -cur_ac / 2.)
 
         # environment specific configurations for CEM
         self.obs_preproc = lambda o: o
@@ -1064,6 +1057,29 @@ class GoalConditionedPolicy(ActorCriticPolicy):
         self.targ_proc = lambda o, next_o: next_o
         self.goals_postproc = lambda g, next_g: next_g
         self.goals_postproc2 = lambda g: g
+
+        # placeholders for computing forward pass using CEM
+        self.sy_cur_obs = tf.Variable(
+            np.zeros(self.worker.ob_space.shape), dtype=tf.float32)
+        self.sy_cur_goals = tf.Variable(
+            np.zeros(self.manager.ac_space.shape), dtype=tf.float32)
+
+        # CEM optimizer for calculating actions
+        self.per = 1
+        self.steps_before_planning = 10000
+        self.worker_cem = CEMOptimizer(
+            self.meta_period * self.worker.ac_space.shape[0],
+            5,
+            500,
+            50,
+            lower_bound=np.tile(self.worker.ac_space.low, [self.meta_period]),
+            upper_bound=np.tile(self.worker.ac_space.high, [self.meta_period]),
+            tf_session=self.sess,
+            epsilon=0.001,
+            alpha=0.25)
+        self.worker_cem.setup(self._compile_worker_cost, True)
+        self.model.sess.run(tf.variables_initializer([self.sy_cur_obs]))
+        self.model.sess.run(tf.variables_initializer([self.sy_cur_goals]))
 
     def _predict_next_obs(self, obs, acs, goals):
         """Compute the next-step model-based observation and goal.
@@ -1116,10 +1132,11 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             acs = self._expand_to_ts_format(acs)
 
         # Obtain model predictions
-        mean, var = self.model.create_prediction_tensors(proc_obs, acs)
+        inputs = tf.concat([proc_obs, acs], axis=-1)
+        mean, var = self.model.create_prediction_tensors(inputs)
 
         # sample the next observation from the model
-        if self.model.is_probabilistic and not self.ign_var:
+        if self.model.is_probabilistic:
 
             predictions = mean + tf.random_normal(
                 shape=tf.shape(mean), mean=0, stddev=1) * tf.sqrt(var)
@@ -1221,7 +1238,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
                 return t + 1, total_cost + delta_cost, next_obs, next_goals, pred_trajs
 
             # predict into the future using static graphs
-            _, costs, _, pred_trajs = tf.while_loop(
+            _, costs, _, _, pred_trajs = tf.while_loop(
                 cond=continue_prediction,
                 body=iteration,
                 loop_vars=[t, init_costs, init_obs, init_goals, pred_trajs],
@@ -1260,7 +1277,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
                 return t + 1, total_cost + delta_cost, next_obs, next_goals
 
             # predict into the future using static graphs
-            _, costs, _ = tf.while_loop(
+            _, costs, _, _ = tf.while_loop(
                 cond=continue_prediction,
                 body=iteration,
                 loop_vars=[t, init_costs, init_obs, init_goals]
@@ -1342,9 +1359,15 @@ class GoalConditionedPolicy(ActorCriticPolicy):
         worker_model_loss = 0
         if self._t == self.steps_before_planning:
             _, _, _, _, _, worker_obs0, worker_obs1, worker_act, _, _, _ = \
-                self.replay_buffer.sample(batch_size=self.steps_before_planning, with_additional=False)
-            new_train_in = np.concatenate([self.obs_preproc(worker_obs0), worker_act], axis=-1)
-            new_train_targs = self.targ_proc(worker_obs0, worker_obs1)
+                self.replay_buffer.sample(
+                    batch_size=self.steps_before_planning, with_additional=False)
+
+            goal_dim = self.manager.ac_space.shape[0]
+            new_train_in = np.concatenate([
+                self.obs_preproc(worker_obs0[:, :-goal_dim]), worker_act], axis=-1)
+            new_train_targs = self.targ_proc(
+                worker_obs0[:, :-goal_dim], worker_obs1[:, :-goal_dim])
+
             self.model.train(
                 new_train_in,
                 new_train_targs,
@@ -1353,5 +1376,6 @@ class GoalConditionedPolicy(ActorCriticPolicy):
                 hide_progress=False,
                 holdout_ratio=0.0,
                 max_logging=5000)
+
         return worker_model_loss
 
