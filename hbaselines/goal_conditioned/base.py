@@ -682,6 +682,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
         self._worker_rewards = []
         self._dones = []
         self._meta_actions = []
+        self.ac_buf = np.array([]).reshape(0, self.worker.ac_space.shape[0])
 
     def get_td_map(self):
         """See parent class."""
