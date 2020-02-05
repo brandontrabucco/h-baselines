@@ -1247,6 +1247,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
                     t.get_shape(),
                     init_costs.get_shape(),
                     init_obs.get_shape(),
+                    init_goals.get_shape(),
                     tf.TensorShape([None, None, self.worker.ob_space.shape[0]])
                 ]
             )
@@ -1373,7 +1374,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             worker_model_loss = self.model.train(
                 new_train_in, new_train_targs,
                 batch_size=32, epochs=100, hide_progress=False,
-                holdout_ratio=0.0, max_logging=5000)
+                holdout_ratio=0.0, max_logging=5000).item()
 
         return worker_model_loss
 
