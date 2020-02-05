@@ -13,6 +13,11 @@ from hbaselines.utils.misc import get_manager_ac_space, get_goal_indices
 from hbaselines.utils.tf_util import get_trainable_vars
 from hbaselines.utils.tf_util import reduce_std
 
+from dmbrl.misc.optimizers import RandomOptimizer, CEMOptimizer
+from dmbrl.modeling.models import BNN
+from dmbrl.modeling.layers import FC
+from dotmap import DotMap
+
 
 class GoalConditionedPolicy(ActorCriticPolicy):
     r"""Goal-conditioned hierarchical reinforcement learning model.
@@ -269,7 +274,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
 
         # Create the replay buffer.
         self.replay_buffer = HierReplayBuffer(
-            buffer_size=int(buffer_size/meta_period),
+            buffer_size=int(buffer_size / meta_period),
             batch_size=batch_size,
             meta_period=meta_period,
             meta_obs_dim=meta_ob_dim[0],
@@ -393,6 +398,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
                 relative_context=relative_goals,
                 offset=0.0
             )
+
         self.worker_reward_fn = worker_reward_fn
 
         if self.connected_gradients:
@@ -409,6 +415,8 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             self.worker_model = None
             self.worker_model_loss = None
             self.worker_model_optimizer = None
+
+        self._t = 0
 
     def initialize(self):
         """See parent class.
@@ -460,7 +468,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
 
         # Get a batch.
         meta_obs0, meta_obs1, meta_act, meta_rew, meta_done, worker_obs0, \
-            worker_obs1, worker_act, worker_rew, worker_done, additional = \
+        worker_obs1, worker_act, worker_rew, worker_done, additional = \
             self.replay_buffer.sample(with_additional=with_additional)
 
         # Update the Manager policy.
@@ -504,7 +512,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
 
         # Update the Worker policy.
         if self.multistep_llp:
-            w_actor_loss = self._train_worker_model(additional["worker_obses"])
+            w_actor_loss = self._train_worker_model()
 
             # The Q-function is not trained.
             w_critic_loss = [0, 0]
@@ -517,6 +525,8 @@ class GoalConditionedPolicy(ActorCriticPolicy):
                 terminals1=worker_done,
                 update_actor=update_actor,
             )
+
+        self._t += 1
 
         return (m_critic_loss, w_critic_loss), (m_actor_loss, w_actor_loss)
 
@@ -536,9 +546,40 @@ class GoalConditionedPolicy(ActorCriticPolicy):
                 obs1=obs[:, self.goal_indices]
             )
 
-        # Return the worker action.
-        worker_action = self.worker.get_action(
-            obs, self.meta_action, apply_noise, random_actions)
+        #################################################
+        # CEM planning algorithm rather than model free #
+        #################################################
+
+        # while the model is still training explore randomly
+        if self._t < self.steps_before_planning:
+            return np.random.uniform(
+                self.worker.ac_space.low,
+                self.worker.ac_space.high,
+                self.worker.ac_space.shape)
+
+        # if actions are already computed, use them
+        if self.ac_buf.shape[0] > 0:
+            worker_action, self.ac_buf = self.ac_buf[0], self.ac_buf[1:]
+            return worker_action
+
+        # populate the current observation and the goal
+        self.sy_cur_obs.load(obs, self.model.sess)
+        self.sy_cur_goals.load(self.meta_action, self.model.sess)
+
+        # run cem to obtain solutions for optimal actions
+        soln = self.worker_cem.obtain_solution(self.prev_sol, self.init_var)
+
+        # store the previous solutions using CEM
+        self.prev_sol = np.concatenate([
+            np.copy(soln)[self.per * self.worker.ac_space.shape[0]:],
+            np.zeros(self.per * self.worker.ac_space.shape[0])])
+
+        # store the previous solutions using CEM
+        self.ac_buf = soln[:self.per * self.worker.ac_space.shape[0]].reshape(
+            -1, self.worker.ac_space.shape[0])
+
+        # pop the optimal actions off the action buffer
+        worker_action, self.ac_buf = self.ac_buf[0], self.ac_buf[1:]
 
         return worker_action
 
@@ -650,7 +691,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
 
         # Get a batch.
         meta_obs0, meta_obs1, meta_act, meta_rew, meta_done, worker_obs0, \
-            worker_obs1, worker_act, worker_rew, worker_done, additional = \
+        worker_obs1, worker_act, worker_rew, worker_done, additional = \
             self.replay_buffer.sample(with_additional=True)
 
         td_map = {}
@@ -658,18 +699,6 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             meta_obs0, meta_act, meta_rew, meta_obs1, meta_done))
         td_map.update(self.worker.get_td_map_from_batch(
             worker_obs0, worker_act, worker_rew, worker_obs1, worker_done))
-
-        goal_dim = self.manager.ac_space.shape[0]
-
-        if self.multistep_llp:
-            for i in range(self.num_ensembles):
-
-                td_map.update({
-                    self.worker_obs_ph[i]: worker_obs0[:, :-goal_dim],
-                    self.worker_obs1_ph[i]: worker_obs1[:, :-goal_dim],
-                    self.worker_action_ph[i]: worker_act,
-                    self.worker_obses_ph: additional["worker_obses"]
-                })
 
         return td_map
 
@@ -887,7 +916,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             # hindsight goal.
             if i > 1:
                 rewards[-(i - 1)] = self.worker_reward_scale \
-                    * self.worker_reward_fn(obs_t, hindsight_goal, obs_tp1)
+                                    * self.worker_reward_fn(obs_t, hindsight_goal, obs_tp1)
 
             obs_tp1 = deepcopy(obs_t)
 
@@ -963,250 +992,81 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             print('setting up Worker dynamics model')
 
         # =================================================================== #
-        # Part 1. Create the model.                                           #
+        # Part 1. Create the model and action optimization method.            #
         # =================================================================== #
 
-        self.worker_model = []
-        self.worker_model_loss = []
-        self.worker_model_optimizer = []
-        self.worker_obs_ph = []
-        self.worker_obs1_ph = []
-        self.worker_action_ph = []
+        # CEM optimizer for calculating actions
+        self.per = 1
+        self.steps_before_planning = 100000
+        self.worker_cem = CEMOptimizer(
+            self.meta_period * self.worker.ac_space.shape[0],
+            5,
+            500,
+            50,
+            lower_bound=np.tile(self.worker.ac_space.low, [self.meta_period]),
+            upper_bound=np.tile(self.worker.ac_space.high, [self.meta_period]),
+            tf_session=self.sess,
+            epsilon=0.001,
+            alpha=0.25)
 
-        goal_dim = self.manager.ac_space.shape[0]
-        ob_dim = self.worker.ob_space.shape[0]
+        # create an ensemble of dynamics models
+        self.prop_mode = 'TS1'
+        self.model = BNN(DotMap(
+            name="Worker/dynamics",
+            num_networks=self.num_ensembles,
+            sess=self.sess, ))
 
-        with tf.compat.v1.variable_scope("Worker/dynamics"):
-            # Create clipping terms for the model logstd. See:
-            # TODO
-            self.max_logstd = tf.Variable(
-                np.ones([1, ob_dim]) / 2.,
-                dtype=tf.float32,
-                name="max_log_std")
-            self.min_logstd = tf.Variable(
-                -np.ones([1, ob_dim]) * 10.,
-                dtype=tf.float32,
-                name="max_log_std")
+        # create an ensemble of dynamics models
+        model_in = self.worker.ob_space.shape[0] + self.worker.ac_space.shape[0]
+        model_out = self.worker.ob_space.shape[0]
 
-            for i in range(self.num_ensembles):
-                # Create placeholders for the model.
-                self.worker_obs_ph.append(tf.compat.v1.placeholder(
-                    tf.float32,
-                    shape=(None,) + self.worker.ob_space.shape,
-                    name="worker_obs0_{}".format(i)))
-                self.worker_obs1_ph.append(tf.compat.v1.placeholder(
-                    tf.float32,
-                    shape=(None,) + self.worker.ob_space.shape,
-                    name="worker_obs1_{}".format(i)))
-                self.worker_action_ph.append(tf.compat.v1.placeholder(
-                    tf.float32,
-                    shape=(None,) + self.worker.ac_space.shape,
-                    name="worker_action_{}".format(i)))
+        # create an ensemble of dynamics models
+        self.model.add(FC(
+            200, input_dim=model_in, activation="swish", weight_decay=0.000025))
+        self.model.add(FC(200, activation="swish", weight_decay=0.00005))
+        self.model.add(FC(200, activation="swish", weight_decay=0.000075))
+        self.model.add(FC(200, activation="swish", weight_decay=0.000075))
+        self.model.add(FC(model_out, weight_decay=0.0001))
 
-                # Create a trainable model of the Worker dynamics.
-                worker_model, mean, logstd = self._setup_worker_model(
-                    obs=self.worker_obs_ph[-1],
-                    action=self.worker_action_ph[-1],
-                    ob_space=self.worker.ob_space,
-                    scope="rho_{}".format(i)
-                )
-                self.worker_model.append(worker_model)
+        # create an ensemble of dynamics models
+        self.model.finalize(tf.train.AdamOptimizer, {"learning_rate": 0.001})
 
-                # The worker model is trained to learn the change in state
-                # between two time-steps.
-                delta = self.worker_obs1_ph[-1] - self.worker_obs_ph[-1]
+        # buffer to store actions sampled from CEM
+        self.ac_buf = np.array([]).reshape(0, self.worker.ac_space.shape[0])
+        self.prev_sol = np.tile((
+            self.worker.ac_space.high +
+            self.worker.ac_space.low) / 2, [self.meta_period])
+        self.init_var = np.tile(np.square(
+            self.worker.ac_space.high -
+            self.worker.ac_space.low) / 16, [self.meta_period])
 
-                # Computes the log probability of choosing a specific output -
-                # used by the loss
-                dist = tfp.distributions.MultivariateNormalDiag(
-                    loc=mean,
-                    scale_diag=tf.exp(logstd)
-                )
-                rho_logp = dist.log_prob(delta)
+        # placeholders for computing forward pass using CEM
+        self.sy_cur_obs = tf.Variable(
+            np.zeros(self.worker.ob_space.shape), dtype=tf.float32)
+        self.sy_cur_goals = tf.Variable(
+            np.zeros(self.manager.ac_space.shape), dtype=tf.float32)
 
-                # Create the model loss.
-                worker_model_loss = -tf.reduce_mean(rho_logp)
+        # environment specific configurations for CEM
+        goal_loss_fn = tf.compat.v1.losses.mean_squared_error
+        self.obs_cost_fn = lambda obs, goals: goal_loss_fn(
+            obs, obs + goals) if self.relative_goals else goal_loss_fn(goals, obs)
 
-                # The additional loss term is in accordance with:
-                # https://github.com/kchua/handful-of-trials
-                worker_model_loss += \
-                    0.01 * tf.reduce_sum(self.max_logstd) \
-                    - 0.01 * tf.reduce_sum(self.min_logstd)
+        # environment specific configurations for CEM
+        ac_loss_fn = tf.compat.v1.losses.mean_squared_error
+        self.ac_cost_fn = lambda cur_ac: 0.0 * ac_loss_fn(cur_ac / 2., -cur_ac / 2.)
 
-                self.worker_model_loss.append(worker_model_loss)
+        # environment specific configurations for CEM
+        self.obs_preproc = lambda o: o
+        self.obs_postproc = lambda o, p: p
+        self.obs_postproc2 = lambda o: o
 
-                # Create an optimizer object.
-                optimizer = tf.compat.v1.train.AdamOptimizer(1e-6)  # FIXME
+        # environment specific configurations for CEM
+        self.targ_proc = lambda o, next_o: next_o
+        self.goals_postproc = lambda g, next_g: next_g
+        self.goals_postproc2 = lambda g: g
 
-                # Create the model optimization technique.
-                worker_model_optimizer = optimizer.minimize(
-                    worker_model_loss,
-                    var_list=get_trainable_vars(
-                        'Worker/dynamics/rho_{}'.format(i))
-                )
-                self.worker_model_optimizer.append(worker_model_optimizer)
-
-                # Add the model loss and dynamics to the tensorboard log.
-                tf.compat.v1.summary.scalar(
-                    'model_{}_loss'.format(i), worker_model_loss)
-                tf.compat.v1.summary.scalar(
-                    'model_{}_mean'.format(i), tf.reduce_mean(worker_model))
-                tf.compat.v1.summary.scalar(
-                    'model_{}_std'.format(i), reduce_std(worker_model))
-
-                # Print the shapes of the generated models.
-                if self.verbose >= 2:
-                    scope_name = 'Worker/dynamics/rho_{}'.format(i)
-                    critic_shapes = [var.get_shape().as_list()
-                                     for var in get_trainable_vars(scope_name)]
-                    critic_nb_params = sum([reduce(lambda x, y: x * y, shape)
-                                            for shape in critic_shapes])
-                    print('  model shapes: {}'.format(critic_shapes))
-                    print('  model params: {}'.format(critic_nb_params))
-
-        # =================================================================== #
-        # Part 2. Create the Worker optimization scheme.                      #
-        # =================================================================== #
-
-        # Collect the observation space of the Worker.
-        ob_dim = self._get_ob_dim(self.worker.ob_space, self.worker.co_space)
-
-        # Create a placeholder to store all worker observations for a given
-        # meta-period.
-        self.worker_obses_ph = tf.compat.v1.placeholder(
-            tf.float32,
-            shape=(None, ob_dim[0], self.meta_period + 1),
-            name='all_worker_obses')
-
-        # Compute the cumulative, discounted model-based loss using outputs
-        # from the Worker's trainable model.
-        self._multistep_llp_loss = 0
-
-        for i in range(self.num_particles):
-            # FIXME: should we choose dynamically?
-            # Choose a model index to compute the trajectory over.
-            model_index = i % self.num_ensembles
-
-            # Create the initial Worker.
-            with tf.compat.v1.variable_scope("Worker/model"):
-                action = self.worker.make_actor(
-                    obs=self.worker_obses_ph[:, :, 0], reuse=True)
-
-            goal_dim = self.manager.ac_space.shape[0]
-
-            # FIXME: goal_indices
-            # Initial step observation from the perspective of the model.
-            obs = self.worker_obses_ph[:, :-goal_dim, 0]
-
-            # FIXME: goal_indices
-            # The initial goal is provided by this placeholder.
-            goal = self.worker_obses_ph[:, -goal_dim:, 0]
-
-            # Collect the first step loss, and the next state and goal.
-            loss, obs1, goal = self._get_step_loss(
-                obs, action, goal, model_index)
-
-            # Repeat the process for the meta-period.
-            for j in range(1, self.meta_period):
-                # FIXME: goal_indices
-                # TODO: why is this necessary
-                # Replace a subset of the next placeholder with the
-                # previous step dynamic and goal.
-                obs = tf.concat((obs1, goal), axis=1)
-
-                # Create the next-step Worker actor.
-                with tf.compat.v1.variable_scope("Worker/model"):
-                    action = self.worker.make_actor(obs, reuse=True)
-
-                # Collect the next loss, observation, and goal.
-                next_loss, obs1, goal = self._get_step_loss(
-                    obs1, action, goal, model_index)
-
-                # Add the next loss to the discounted sum.
-                loss += self.worker.gamma ** j * next_loss
-
-            # Add the next loss to the multi-step LLP loss.
-            self._multistep_llp_loss += loss / self.num_particles
-
-            # Add the final loss for tensorboard logging.
-            tf.compat.v1.summary.scalar(
-                'worker_model_loss', self._multistep_llp_loss)
-
-        # Create an optimizer object.
-        optimizer = tf.compat.v1.train.AdamOptimizer(self.actor_lr)
-
-        # Create the model optimization technique.
-        self._multistep_llp_optimizer = optimizer.minimize(
-            self._multistep_llp_loss,
-            var_list=get_trainable_vars('Worker/model/pi'))
-
-    def _setup_worker_model(self,
-                            obs,
-                            action,
-                            ob_space,
-                            reuse=False,
-                            scope="rho"):
-        """Create the trainable parameters of the Worker dynamics model.
-
-        Parameters
-        ----------
-        obs : tf.compat.v1.placeholder
-            the last step observation, not including the context
-        action : tf.compat.v1.placeholder
-            the action from the Worker policy. May be a function of the
-            Manager's trainable parameters
-        ob_space : gym.spaces.*
-            the observation space, not including the context space
-        reuse : bool
-            whether or not to reuse parameters
-        scope : str
-            the scope name of the actor
-
-        Returns
-        -------
-        tf.Variable
-            the output from the Worker dynamics model
-        tf.Variable
-            the mean of the Worker dynamics model
-        tf.Variable
-            the log std of the Worker dynamics model
-        """
-        with tf.compat.v1.variable_scope(scope, reuse=reuse):
-            # Concatenate the observations and actions.
-            rho_h = tf.concat([obs, action], axis=-1)
-
-            # Create the hidden layers.
-            for i, layer_size in enumerate(self.layers):
-                rho_h = self._layer(
-                    rho_h,  layer_size, 'fc{}'.format(i),
-                    act_fun=self.act_fun,
-                    layer_norm=self.layer_norm
-                )
-
-            # Create the output mean.
-            rho_mean = self._layer(rho_h, ob_space.shape[0], 'rho_mean')
-
-            # Create the output logstd term.
-            rho_logvar = self._layer(rho_h, ob_space.shape[0], 'rho_logvar')
-
-            # Perform log-std clipping as describe in Appendix A.1 of:
-            # TODO
-            rho_logvar = self.max_logstd - tf.nn.softplus(
-                self.max_logstd - rho_logvar)
-            rho_logvar = self.min_logstd + tf.nn.softplus(
-                rho_logvar - self.min_logstd)
-
-            rho_logstd = rho_logvar / 2.
-
-            rho_std = tf.exp(rho_logstd)
-
-            # The model samples from its distribution.
-            rho = rho_mean + tf.random.normal(tf.shape(rho_mean)) * rho_std
-
-        return rho, rho_mean, rho_logstd
-
-    def _get_step_loss(self, obs, action, goal, model_index):
-        """Compute the next-step model-based loss.
+    def _predict_next_obs(self, obs, acs, goals):
+        """Compute the next-step model-based observation and goal.
 
         The inputs and outputs here are tf.Variable in order to propagate
         losses through them.
@@ -1214,95 +1074,284 @@ class GoalConditionedPolicy(ActorCriticPolicy):
         Parameters
         ----------
         obs : tf.Variable
-            the previous step observation, as relevant to the Worker model
+            the previous step observations, as relevant to the Worker model
         action : tf.Variable
-            the most recent action performed by the Worker
-        goal : tf.Variable
-            the most recent goal
-        model_index : int
-            the index number of the model used to update the Worker dynamics
+            the most recent actions performed by the Worker
+        goals : tf.Variable
+            the most recent goals
 
         Returns
         -------
         tf.Variable
-            the next-step loss
+            the next-step observations
         tf.Variable
-            the next-step observation
-        tf.Variable
-            the next-step goal
+            the next-step goals
         """
-        goal_dim = self.manager.ac_space.shape[0]
-        loss_fn = tf.compat.v1.losses.mean_squared_error
+        proc_obs = self.obs_preproc(obs)
 
-        with tf.compat.v1.variable_scope("Worker/dynamics"):
-            # Compute the delta term.
-            delta, *_ = self._setup_worker_model(
-                obs=obs,
-                action=action,
-                ob_space=self.worker.ob_space,
-                reuse=True,
-                scope="rho_{}".format(model_index)
-            )
+        # TS Optimization: Expand so that particles are only passed through one of the networks.
+        if self.prop_mode == "TS1":
+            # isolate the number of particles in an independent axis
+            proc_obs = tf.reshape(
+                proc_obs, [-1, self.num_particles, proc_obs.get_shape()[-1]])
 
-            # Compute the next observation.
-            next_obs = obs + delta
+            # randomly sort the particles among the models
+            sort_idxs = tf.nn.top_k(
+                tf.random_uniform([tf.shape(proc_obs)[0], self.num_particles]),
+                k=self.num_particles).indices
 
-        # FIXME: goal_indices
-        # Compute the loss associated with this obs0/obs1/action tuple, as well
-        # as the next goal.
-        if self.relative_goals:
-            loss = loss_fn(obs[:, :goal_dim] + goal, next_obs[:, :goal_dim])
-            next_goal = obs[:, :goal_dim] + goal - next_obs[:, :goal_dim]
+            # choose a model for each particle to be processed with
+            tmp = tf.tile(tf.range(
+                tf.shape(proc_obs)[0])[:, None],
+                          [1, self.num_particles])[:, :, None]
+            idxs = tf.concat([tmp, sort_idxs[:, :, None]], axis=-1)
+
+            # select the observations that correspond to each model
+            proc_obs = tf.gather_nd(proc_obs, idxs)
+            proc_obs = tf.reshape(proc_obs, [-1, proc_obs.get_shape()[-1]])
+
+        # insert a new axis into the tensor for the number of dynamics models
+        if self.prop_mode == "TS1" or self.prop_mode == "TSinf":
+            proc_obs = self._expand_to_ts_format(proc_obs)
+            acs = self._expand_to_ts_format(acs)
+
+        # Obtain model predictions
+        mean, var = self.model.create_prediction_tensors(proc_obs, acs)
+
+        # sample the next observation from the model
+        if self.model.is_probabilistic and not self.ign_var:
+
+            predictions = mean + tf.random_normal(
+                shape=tf.shape(mean), mean=0, stddev=1) * tf.sqrt(var)
+
+            if self.prop_mode == "MM":
+                model_out_dim = predictions.get_shape()[-1].value
+
+                predictions = tf.reshape(
+                    predictions, [-1, self.num_particles, model_out_dim])
+                prediction_mean = tf.reduce_mean(
+                    predictions, axis=1, keep_dims=True)
+
+                prediction_var = tf.reduce_mean(
+                    tf.square(predictions - prediction_mean),
+                    axis=1, keep_dims=True)
+
+                z = tf.random_normal(
+                    shape=tf.shape(predictions), mean=0, stddev=1)
+
+                samples = prediction_mean + z * tf.sqrt(prediction_var)
+                predictions = tf.reshape(samples, [-1, model_out_dim])
         else:
-            loss = loss_fn(goal, next_obs[:, :goal_dim])
-            next_goal = goal
+            predictions = mean
 
-        return loss, next_obs, next_goal
+        # TS Optimization: Remove additional dimension
+        if self.prop_mode == "TS1" or self.prop_mode == "TSinf":
+            predictions = self._flatten_to_matrix(predictions)
 
-    def _train_worker_model(self, worker_obses):
-        """Train the Worker actor and dynamics model.
+        if self.prop_mode == "TS1":
+            predictions = tf.reshape(
+                predictions,
+                [-1, self.num_particles, predictions.get_shape()[-1]])
 
-        The original goal-less states and actions are used to train the model.
+            sort_idxs = tf.nn.top_k(
+                -sort_idxs, k=self.num_particles).indices
+
+            idxs = tf.concat([tmp, sort_idxs[:, :, None]], axis=-1)
+            predictions = tf.gather_nd(predictions, idxs)
+            predictions = tf.reshape(predictions, [-1, predictions.get_shape()[-1]])
+
+        next_goals = self.goal_transition_fn(obs, goals, predictions)
+
+        return self.obs_postproc(obs, predictions), \
+               self.goals_postproc(goals, next_goals)
+
+    def _compile_worker_cost(self, ac_seqs, get_pred_trajs=False):
+        """Compile the forward dynamics predictions and cost for CEM.
+
+        See: https://github.com/kchua/handful-of-trials/blob/
+             e1a62f217508a384e49ecf7d16a3249e187bcff9/dmbrl/controllers/MPC.py#L265
 
         Parameters
         ----------
-        worker_obses : array_like
-            full meta-period worker observations
+        ac_seqs : tf.Variable
+            the actions suggested by CEM at this iteration
+        get_pred_trajs : boolean
+            also return the predicted sequence states
 
         Returns
         -------
-        float
-            Worker loss
+        tf.Variable
+            the costs of each sequence of actions in the batch
+        tf.Variable
+            the sequence of states predicted by the dynamics model
         """
-        step_ops = [
-            self._multistep_llp_loss,
-            self._multistep_llp_optimizer
-        ]
 
-        feed_dict = {
-            self.worker_obses_ph: worker_obses,
-        }
+        # process the input tensors into the correct format
+        t, nopt = tf.constant(0), tf.shape(ac_seqs)[0]
+        init_costs = tf.zeros([nopt, self.num_particles])
+        ac_seqs = tf.reshape(
+            ac_seqs, [-1, self.meta_period, self.worker.ac_space.shape[0]])
+        ac_seqs = tf.reshape(tf.tile(
+            tf.transpose(ac_seqs, [1, 0, 2])[:, :, None], [1, 1, self.num_particles, 1]),
+            [self.meta_period, -1, self.worker.ac_space.shape[0]])
 
-        goal_dim = self.manager.ac_space.shape[0]
+        # get the current observation from the environment
+        init_obs = tf.tile(self.sy_cur_obs[None], [nopt * self.num_particles, 1])
+        init_goals = tf.tile(self.sy_cur_goals[None], [nopt * self.num_particles, 1])
 
-        # Add the step ops and samples for each of the model training
-        # operations in the ensemble.
-        for i in range(self.num_ensembles):
-            # Sample new data for this model.
+        # this condition stops the planning once the meta_period is reached
+        def continue_prediction(t, *args):
+            return tf.less(t, self.meta_period)
+
+        # is the predicted states should be returns
+        if get_pred_trajs:
+            pred_trajs = init_obs[None]
+
+            # loop function for predicting future states using tensorflow
+            def iteration(t, total_cost, cur_obs, cur_goals, pred_trajs):
+                cur_acs = ac_seqs[t]
+                next_obs, next_goals = self._predict_next_obs(cur_obs, cur_acs, cur_goals)
+                delta_cost = tf.reshape(
+                    self.obs_cost_fn(next_obs, next_goals) + self.ac_cost_fn(
+                        cur_acs), [-1, self.num_particles])
+
+                next_obs = self.obs_postproc2(next_obs)
+                next_goals = self.goals_postproc2(next_goals)
+                pred_trajs = tf.concat([pred_trajs, next_obs[None]], axis=0)
+                return t + 1, total_cost + delta_cost, next_obs, next_goals, pred_trajs
+
+            # predict into the future using static graphs
+            _, costs, _, pred_trajs = tf.while_loop(
+                cond=continue_prediction,
+                body=iteration,
+                loop_vars=[t, init_costs, init_obs, init_goals, pred_trajs],
+                shape_invariants=[
+                    t.get_shape(),
+                    init_costs.get_shape(),
+                    init_obs.get_shape(),
+                    tf.TensorShape([None, None, self.worker.ob_space.shape[0]])
+                ]
+            )
+
+            # Replace nan costs with very high cost
+            costs = tf.reduce_mean(tf.where(
+                tf.is_nan(costs),
+                1e6 * tf.ones_like(costs), costs), axis=1)
+
+            pred_trajs = tf.reshape(
+                pred_trajs,
+                [self.meta_period + 1, -1, self.num_particles, self.worker.ob_space.shape[0]])
+
+            return costs, pred_trajs
+
+        # if only the predicted actions should be returned
+        else:
+
+            # loop function for predicting future states using tensorflow
+            def iteration(t, total_cost, cur_obs, cur_goals):
+                cur_acs = ac_seqs[t]
+                next_obs, next_goals = self._predict_next_obs(cur_obs, cur_acs, cur_goals)
+                delta_cost = tf.reshape(
+                    self.obs_cost_fn(next_obs, next_goals) + self.ac_cost_fn(
+                        cur_acs), [-1, self.num_particles])
+
+                next_obs = self.obs_postproc2(next_obs)
+                next_goals = self.goals_postproc2(next_goals)
+                return t + 1, total_cost + delta_cost, next_obs, next_goals
+
+            # predict into the future using static graphs
+            _, costs, _ = tf.while_loop(
+                cond=continue_prediction,
+                body=iteration,
+                loop_vars=[t, init_costs, init_obs, init_goals]
+            )
+
+            # Replace nan costs with very high cost
+            return tf.reduce_mean(tf.where(
+                tf.is_nan(costs),
+                1e6 * tf.ones_like(costs), costs), axis=1)
+
+    def _expand_to_ts_format(self, mat):
+        """Process a matrix into a format for the ensemble to predict over
+
+        See: https://github.com/kchua/handful-of-trials/blob/
+             e1a62f217508a384e49ecf7d16a3249e187bcff9/dmbrl/controllers/MPC.py#L265
+
+        Parameters
+        ----------
+        mat : tf.Variable
+            the tensor to be processed into the correct shape
+
+        Returns
+        -------
+        tf.Variable
+            the tensor with an adjusted shape
+        """
+        dim = mat.get_shape()[-1]
+        return tf.reshape(
+            tf.transpose(
+                tf.reshape(
+                    mat,
+                    [-1, self.num_ensembles,
+                     self.num_particles // self.num_ensembles, dim]),
+                [1, 0, 2, 3]
+            ),
+            [self.num_ensembles, -1, dim]
+        )
+
+    def _flatten_to_matrix(self, ts_fmt_arr):
+        """Process particles sampled for a trajectory into a matrix.
+
+        See: https://github.com/kchua/handful-of-trials/blob/
+             e1a62f217508a384e49ecf7d16a3249e187bcff9/dmbrl/controllers/MPC.py#L265
+
+        Parameters
+        ----------
+        ts_fmt_arr : tf.Variable
+            the tensor in the format for trajectory sampling
+
+        Returns
+        -------
+        tf.Variable
+            the tensor with a matrix shape
+        """
+        dim = ts_fmt_arr.get_shape()[-1]
+        return tf.reshape(
+            tf.transpose(
+                tf.reshape(
+                    ts_fmt_arr,
+                    [self.num_ensembles, -1,
+                     self.num_particles // self.num_ensembles, dim]),
+                [1, 0, 2, 3]
+            ),
+            [-1, dim]
+        )
+
+    def _train_worker_model(self):
+        """Train the dynamics model on data from the replay buffer.
+
+        See: https://github.com/kchua/handful-of-trials/blob/
+             e1a62f217508a384e49ecf7d16a3249e187bcff9/dmbrl/controllers/MPC.py#L265
+
+        Parameters
+        ----------
+
+        Returns
+        -------
+        """
+        worker_model_loss = 0
+        if self._t == self.steps_before_planning:
             _, _, _, _, _, worker_obs0, worker_obs1, worker_act, _, _, _ = \
-                self.replay_buffer.sample(with_additional=False)
+                self.replay_buffer.sample(batch_size=self.steps_before_planning, with_additional=False)
+            new_train_in = np.concatenate([self.obs_preproc(worker_obs0), worker_act], axis=-1)
+            new_train_targs = self.targ_proc(worker_obs0, worker_obs1)
+            self.model.train(
+                new_train_in,
+                new_train_targs,
+                batch_size=32,
+                epochs=100,
+                hide_progress=False,
+                holdout_ratio=0.0,
+                max_logging=5000)
+        return worker_model_loss
 
-            # Add the training operation.
-            step_ops.append(self.worker_model_optimizer[i])
-
-            # Add the samples to the feed_dict.
-            feed_dict.update({
-                self.worker_obs_ph[i]: worker_obs0[:, :-goal_dim],
-                self.worker_obs1_ph[i]: worker_obs1[:, :-goal_dim],
-                self.worker_action_ph[i]: worker_act
-            })
-
-        # Run the training operations.
-        worker_loss, *_ = self.sess.run(step_ops, feed_dict=feed_dict)
-
-        return worker_loss

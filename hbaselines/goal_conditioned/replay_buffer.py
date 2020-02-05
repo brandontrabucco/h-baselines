@@ -41,6 +41,9 @@ class HierReplayBuffer(ReplayBuffer):
         self._worker_ob_dim = worker_obs_dim
         self._worker_ac_dim = worker_ac_dim
 
+        self._meta_ob_dim = meta_obs_dim
+        self._meta_ac_dim = meta_ac_dim
+
         # Used to store buffer data.
         self._storage = [None for _ in range(buffer_size)]
 
@@ -100,7 +103,7 @@ class HierReplayBuffer(ReplayBuffer):
         self._next_idx = (self._next_idx + 1) % self._maxsize
         self._size = min(self._size + 1, self._maxsize)
 
-    def _encode_sample(self, idxes, **kwargs):
+    def _encode_sample(self, idxes, batch_size=None, **kwargs):
         """Return a sample from the replay buffer based on indices.
 
         Parameters
@@ -156,6 +159,43 @@ class HierReplayBuffer(ReplayBuffer):
         else:
             additional = None
 
+        if batch_size is None:
+
+            # Add the new sample to the list of returned samples.
+            s_meta_obs0 = self.meta_obs0
+            s_meta_obs1 = self.meta_obs1
+            s_meta_act = self.meta_act
+            s_meta_rew = self.meta_rew
+            s_meta_done = self.meta_done
+            s_worker_obs0 = self.worker_obs0
+            s_worker_obs1 = self.worker_obs1
+            s_worker_act = self.worker_act
+            s_worker_rew = self.worker_rew
+            s_worker_done = self.worker_done
+
+        else:
+
+            s_meta_obs0 = np.zeros(
+                (batch_size, self._meta_ob_dim), dtype=np.float32)
+            s_meta_obs1 = np.zeros(
+                (batch_size, self._meta_ob_dim), dtype=np.float32)
+            s_meta_act = np.zeros(
+                (batch_size, self._meta_ac_dim), dtype=np.float32)
+            s_meta_rew = np.zeros(
+                batch_size, dtype=np.float32)
+            s_meta_done = np.zeros(
+                batch_size, dtype=np.float32)
+            s_worker_obs0 = np.zeros(
+                (batch_size, self._worker_ob_dim), dtype=np.float32)
+            s_worker_obs1 = np.zeros(
+                (batch_size, self._worker_ob_dim), dtype=np.float32)
+            s_worker_act = np.zeros(
+                (batch_size, self._worker_ac_dim), dtype=np.float32)
+            s_worker_rew = np.zeros(
+                batch_size, dtype=np.float32)
+            s_worker_done = np.zeros(
+                batch_size, dtype=np.float32)
+
         for i, indx in enumerate(idxes):
             # Extract the elements of the sample.
             meta_obs, meta_action, meta_reward, worker_obses, worker_actions, \
@@ -177,16 +217,16 @@ class HierReplayBuffer(ReplayBuffer):
             worker_done = 0  # see docstring
 
             # Add the new sample to the list of returned samples.
-            self.meta_obs0[i, :] = np.array(meta_obs0, copy=False)
-            self.meta_obs1[i, :] = np.array(meta_obs1, copy=False)
-            self.meta_act[i, :] = np.array(meta_action, copy=False)
-            self.meta_rew[i] = np.array(meta_reward, copy=False)
-            self.meta_done[i] = np.array(meta_done, copy=False)
-            self.worker_obs0[i, :] = np.array(worker_obs0, copy=False)
-            self.worker_obs1[i, :] = np.array(worker_obs1, copy=False)
-            self.worker_act[i, :] = np.array(worker_action, copy=False)
-            self.worker_rew[i] = np.array(worker_reward, copy=False)
-            self.worker_done[i] = np.array(worker_done, copy=False)
+            s_meta_obs0[i, :] = np.array(meta_obs0, copy=False)
+            s_meta_obs1[i, :] = np.array(meta_obs1, copy=False)
+            s_meta_act[i, :] = np.array(meta_action, copy=False)
+            s_meta_rew[i] = np.array(meta_reward, copy=False)
+            s_meta_done[i] = np.array(meta_done, copy=False)
+            s_worker_obs0[i, :] = np.array(worker_obs0, copy=False)
+            s_worker_obs1[i, :] = np.array(worker_obs1, copy=False)
+            s_worker_act[i, :] = np.array(worker_action, copy=False)
+            s_worker_rew[i] = np.array(worker_reward, copy=False)
+            s_worker_done[i] = np.array(worker_done, copy=False)
 
             if kwargs.get("with_additional", True):
                 for j in range(len(worker_obses)):
@@ -194,14 +234,14 @@ class HierReplayBuffer(ReplayBuffer):
                 for j in range(len(worker_actions)):
                     additional["worker_actions"][i, :, j] = worker_actions[j]
 
-        return self.meta_obs0, \
-            self.meta_obs1, \
-            self.meta_act, \
-            self.meta_rew, \
-            self.meta_done, \
-            self.worker_obs0, \
-            self.worker_obs1, \
-            self.worker_act, \
-            self.worker_rew, \
-            self.worker_done, \
+        return s_meta_obs0, \
+            s_meta_obs1, \
+            s_meta_act, \
+            s_meta_rew, \
+            s_meta_done, \
+            s_worker_obs0, \
+            s_worker_obs1, \
+            s_worker_act, \
+            s_worker_rew, \
+            s_worker_done, \
             additional

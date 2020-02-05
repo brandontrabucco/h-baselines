@@ -93,7 +93,7 @@ class ReplayBuffer(object):
         return self.obs_t[idxes, :], self.action_t[idxes, :], \
             self.reward[idxes], self.obs_tp1[idxes, :], self.done[idxes]
 
-    def sample(self, **kwargs):
+    def sample(self, batch_size=None, **kwargs):
         """Sample a batch of experiences.
 
         Returns
@@ -110,5 +110,8 @@ class ReplayBuffer(object):
             done_mask[i] = 1 if executing act_batch[i] resulted in the end of
             an episode and 0 otherwise.
         """
-        indices = np.random.randint(0, self._size, size=self._batch_size)
-        return self._encode_sample(indices, **kwargs)
+        indices = np.random.randint(
+            0,
+            self._size,
+            size=self._batch_size if batch_size is None else batch_size)
+        return self._encode_sample(indices, batch_size=batch_size, **kwargs)

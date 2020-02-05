@@ -1,0 +1,4 @@
+[submodule "handful-of-trials"]
+	path = handful-of-trials
+	url = git@github.com:kchua/handful-of-trials.git
+	branch = master
