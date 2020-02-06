@@ -295,8 +295,9 @@ class GoalConditionedPolicy(BaseGoalConditionedPolicy):
 
         # create the worker policy with inputs directly from the manager
         with tf.compat.v1.variable_scope("Worker/model"):
+            worker_action = self.worker.make_actor(obs, reuse=True, scope="pi")
             worker_with_manager_obs = self.worker.make_critic(
-                obs, self.worker.action_ph, reuse=True, scope="qf_0")
+                obs, worker_action, reuse=True, scope="qf_0")
 
         # create a tensorflow operation that mimics the reward function that is
         # used to provide feedback to the worker
@@ -315,7 +316,8 @@ class GoalConditionedPolicy(BaseGoalConditionedPolicy):
         optimizer = tf.compat.v1.train.AdamOptimizer(self.manager.actor_lr)
         self.cg_optimizer = optimizer.minimize(
             self.manager.actor_loss + self.cg_weights * self.cg_loss,
-            var_list=get_trainable_vars("Manager/model/pi/"),
+            var_list=get_trainable_vars("Manager/model/pi/") + get_trainable_vars(
+                "Worker/model/pi/"),
         )
 
     def _connected_gradients_update(self,
@@ -389,7 +391,6 @@ class GoalConditionedPolicy(BaseGoalConditionedPolicy):
 
             feed_dict.update({
                 self.worker.obs_ph: worker_obs0,
-                self.worker.action_ph: worker_actions,
                 self.worker.obs1_ph: worker_obs1,
             })
 

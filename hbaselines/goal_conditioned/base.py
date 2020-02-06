@@ -473,7 +473,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             rewards=worker_rew,
             obs1=worker_obs1,
             terminals1=worker_done,
-            update_actor=update_actor,
+            update_actor=not self.connected_gradients,
         )
 
         return (m_critic_loss, w_critic_loss), (m_actor_loss, w_actor_loss)
