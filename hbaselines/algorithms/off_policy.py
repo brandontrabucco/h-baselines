@@ -122,6 +122,8 @@ GOAL_CONDITIONED_PARAMS.update(dict(
     worker_dynamics_bptt_lr=1e-6,
     # learning rate for training the worker policy using bptt
     worker_model_bptt_lr=3e-4,
+    # whether to add the final q value for the final state to actor loss
+    add_final_q_value=False,
     # number of ensemble models for the Worker dynamics
     num_ensembles=1,
     # number of particles used to generate the forward estimate of the model.

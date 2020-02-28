@@ -137,6 +137,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
                  max_rollout_using_model,
                  worker_dynamics_bptt_lr,
                  worker_model_bptt_lr,
+                 add_final_q_value,
                  num_ensembles,
                  num_particles,
                  use_fingerprints,
@@ -215,6 +216,8 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             dynamics learning rate
         worker_model_bptt_lr : float
             actor learning rate
+        add_final_q_value: bool
+            whether to add the final q value to the actor loss
         num_ensembles : int
             number of ensemble models for the Worker dynamics
         num_particles : int
@@ -268,6 +271,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
         self.max_rollout_using_model = max_rollout_using_model
         self.worker_dynamics_bptt_lr = worker_dynamics_bptt_lr
         self.worker_model_bptt_lr = worker_model_bptt_lr
+        self.add_final_q_value = add_final_q_value
         self.num_ensembles = num_ensembles
         self.num_particles = num_particles
         self.use_fingerprints = use_fingerprints
@@ -417,6 +421,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
         if self.multistep_llp:
             # Create the Worker dynamics model and training procedure.
             self._setup_multistep_llp()
+
         else:
             # Default values if the specific algorithm is not called.
             self.worker_obs_ph = None
@@ -519,20 +524,16 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             m_critic_loss, m_actor_loss = [0, 0], 0
 
         # Update the Worker policy.
-        if self.multistep_llp:
-            w_actor_loss = self._train_worker_model(additional["worker_obses"])
+        w_critic_loss, w_actor_loss = self.worker.update_from_batch(
+            obs0=worker_obs0,
+            actions=worker_act,
+            rewards=worker_rew,
+            obs1=worker_obs1,
+            terminals1=worker_done,
+            update_actor=update_actor and not self.multistep_llp)
 
-            # The Q-function is not trained.
-            w_critic_loss = [0, 0]
-        else:
-            w_critic_loss, w_actor_loss = self.worker.update_from_batch(
-                obs0=worker_obs0,
-                actions=worker_act,
-                rewards=worker_rew,
-                obs1=worker_obs1,
-                terminals1=worker_done,
-                update_actor=update_actor,
-            )
+        if self.multistep_llp:
+            w_actor_loss += self._train_worker_model(additional["worker_obses"])
 
         return (m_critic_loss, w_critic_loss), (m_actor_loss, w_actor_loss)
 
@@ -543,6 +544,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             # time period requires is.
             self.meta_action = self.manager.get_action(
                 obs, context, apply_noise, random_actions)
+
         else:
             # Update the meta-action in accordance with the fixed transition
             # function.
@@ -1119,8 +1121,10 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             loss, obs1, goal = self._get_step_loss(
                 obs, action, goal, model_index)
 
+            horizon = min(self.max_rollout_using_model, self.meta_period)
+
             # Repeat the process for the meta-period.
-            for j in range(1, min(self.max_rollout_using_model, self.meta_period)):
+            for j in range(1, horizon):
                 # FIXME: goal_indices
                 # TODO: why is this necessary
                 # Replace a subset of the next placeholder with the
@@ -1145,6 +1149,18 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             tf.compat.v1.summary.scalar(
                 'Worker/worker_model_loss', self._multistep_llp_loss)
 
+        # calculate the q value at the end of the k step rollout
+        obs = tf.concat((obs1, goal), axis=1)
+        with tf.compat.v1.variable_scope("Worker/model"):
+            action = self.worker.make_actor(obs, reuse=True)
+            qvalue = tf.reduce_mean(
+                self.worker.make_critic(obs, action, reuse=True, scope="qf_0"),
+                self.worker.make_critic(obs, action, reuse=True, scope="qf_1"))
+
+        # add final q value: https://openreview.net/forum?id=Skln2A4YDB
+        if self.add_final_q_value:
+            loss -= (self.worker.gamma ** horizon) * qvalue
+
         # Create an optimizer object.
         optimizer = tf.compat.v1.train.AdamOptimizer(self.worker_model_bptt_lr)
 
@@ -1155,13 +1171,13 @@ class GoalConditionedPolicy(ActorCriticPolicy):
         # Log the max, min, mean, and std for each variable
         for grad, var in grads_and_vars:
             tf.compat.v1.summary.scalar(
-                'Worker/{}/mean'.format(var.name), tf.reduce_mean(grad))
+                'bptt/{}/mean'.format(var.name), tf.reduce_mean(grad))
             tf.compat.v1.summary.scalar(
-                'Worker/{}/std'.format(var.name), tf.math.reduce_std(grad))
+                'bptt/{}/std'.format(var.name), tf.math.reduce_std(grad))
             tf.compat.v1.summary.scalar(
-                'Worker/{}/max'.format(var.name), tf.reduce_max(grad))
+                'bptt/{}/max'.format(var.name), tf.reduce_max(grad))
             tf.compat.v1.summary.scalar(
-                'Worker/{}/min'.format(var.name), tf.reduce_min(grad))
+                'bptt/{}/min'.format(var.name), tf.reduce_min(grad))
 
         # Create the model optimization technique.
         self._multistep_llp_optimizer = optimizer.apply_gradients(
