@@ -114,6 +114,14 @@ GOAL_CONDITIONED_PARAMS.update(dict(
     cg_weights=0.0005,
     # whether to use the multi-step LLP update procedure. See: TODO
     multistep_llp=False,
+    # whether to use samples for predicting future states
+    use_sample_not_mean=False,
+    # the number of states into the future to predict using a model
+    max_rollout_using_model=10,
+    # learning rate for training the forward dynamics
+    worker_dynamics_bptt_lr=1e-6,
+    # learning rate for training the worker policy using bptt
+    worker_model_bptt_lr=3e-4,
     # number of ensemble models for the Worker dynamics
     num_ensembles=1,
     # number of particles used to generate the forward estimate of the model.
