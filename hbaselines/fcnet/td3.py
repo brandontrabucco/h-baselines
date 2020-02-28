@@ -344,10 +344,24 @@ class FeedForwardPolicy(ActorCriticPolicy):
         # create an optimizer object
         optimizer = tf.compat.v1.train.AdamOptimizer(self.actor_lr)
 
-        self.actor_optimizer = optimizer.minimize(
+        grads_and_vars = optimizer.compute_gradients(
             self.actor_loss,
-            var_list=get_trainable_vars(scope_name)
-        )
+            var_list=get_trainable_vars(scope_name))
+
+        # Log the max, min, mean, and std for each variable
+        for grad, var in grads_and_vars:
+            tf.compat.v1.summary.scalar(
+                '{}/mean'.format(var.name), tf.reduce_mean(grad))
+            tf.compat.v1.summary.scalar(
+                '{}/std'.format(var.name), tf.math.reduce_std(grad))
+            tf.compat.v1.summary.scalar(
+                '{}/max'.format(var.name), tf.reduce_max(grad))
+            tf.compat.v1.summary.scalar(
+                '{}/min'.format(var.name), tf.reduce_min(grad))
+
+        # Create the model optimization technique.
+        self.actor_optimizer = optimizer.apply_gradients(
+            grads_and_vars)
 
     def _setup_critic_optimizer(self, critic_target, scope):
         """Create the critic loss, gradient, and optimizer."""

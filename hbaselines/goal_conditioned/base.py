@@ -1148,10 +1148,24 @@ class GoalConditionedPolicy(ActorCriticPolicy):
         # Create an optimizer object.
         optimizer = tf.compat.v1.train.AdamOptimizer(self.worker_model_bptt_lr)
 
-        # Create the model optimization technique.
-        self._multistep_llp_optimizer = optimizer.minimize(
+        grads_and_vars = optimizer.compute_gradients(
             self._multistep_llp_loss,
             var_list=get_trainable_vars('Worker/model/pi'))
+
+        # Log the max, min, mean, and std for each variable
+        for grad, var in grads_and_vars:
+            tf.compat.v1.summary.scalar(
+                'Worker/{}/mean'.format(var.name), tf.reduce_mean(grad))
+            tf.compat.v1.summary.scalar(
+                'Worker/{}/std'.format(var.name), tf.math.reduce_std(grad))
+            tf.compat.v1.summary.scalar(
+                'Worker/{}/max'.format(var.name), tf.reduce_max(grad))
+            tf.compat.v1.summary.scalar(
+                'Worker/{}/min'.format(var.name), tf.reduce_min(grad))
+
+        # Create the model optimization technique.
+        self._multistep_llp_optimizer = optimizer.apply_gradients(
+            grads_and_vars)
 
     def _setup_worker_model(self,
                             obs,
