@@ -533,7 +533,9 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             update_actor=update_actor and not self.multistep_llp)
 
         if self.multistep_llp:
-            w_actor_loss += self._train_worker_model(additional["worker_obses"])
+            w_actor_loss += self._train_worker_model(worker_obs0,
+                                                     worker_obs1,
+                                                     worker_act)
 
         return (m_critic_loss, w_critic_loss), (m_actor_loss, w_actor_loss)
 
@@ -686,7 +688,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
                     self.worker_obs_ph[i]: worker_obs0[:, :-goal_dim],
                     self.worker_obs1_ph[i]: worker_obs1[:, :-goal_dim],
                     self.worker_action_ph[i]: worker_act,
-                    self.worker_obses_ph: additional["worker_obses"]
+                    self.rollout_worker_obs: worker_obs0
                 })
 
         return td_map
@@ -1088,10 +1090,10 @@ class GoalConditionedPolicy(ActorCriticPolicy):
 
         # Create a placeholder to store all worker observations for a given
         # meta-period.
-        self.worker_obses_ph = tf.compat.v1.placeholder(
+        self.rollout_worker_obs = tf.compat.v1.placeholder(
             tf.float32,
-            shape=(None, ob_dim[0], self.meta_period + 1),
-            name='all_worker_obses')
+            shape=(None, ob_dim[0]),
+            name='rollout_worker_obs')
 
         # Compute the cumulative, discounted model-based loss using outputs
         # from the Worker's trainable model.
@@ -1105,17 +1107,17 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             # Create the initial Worker.
             with tf.compat.v1.variable_scope("Worker/model"):
                 action = self.worker.make_actor(
-                    obs=self.worker_obses_ph[:, :, 0], reuse=True)
+                    obs=self.rollout_worker_obs[:, :], reuse=True)
 
             goal_dim = self.manager.ac_space.shape[0]
 
             # FIXME: goal_indices
             # Initial step observation from the perspective of the model.
-            obs = self.worker_obses_ph[:, :-goal_dim, 0]
+            obs = self.rollout_worker_obs[:, :-goal_dim]
 
             # FIXME: goal_indices
             # The initial goal is provided by this placeholder.
-            goal = self.worker_obses_ph[:, -goal_dim:, 0]
+            goal = self.rollout_worker_obs[:, -goal_dim:]
 
             # Collect the first step loss, and the next state and goal.
             loss, obs1, goal = self._get_step_loss(
@@ -1153,9 +1155,9 @@ class GoalConditionedPolicy(ActorCriticPolicy):
         obs = tf.concat((obs1, goal), axis=1)
         with tf.compat.v1.variable_scope("Worker/model"):
             action = self.worker.make_actor(obs, reuse=True)
-            qvalue = tf.reduce_mean(
+            qvalue = tf.reduce_mean([
                 self.worker.make_critic(obs, action, reuse=True, scope="qf_0"),
-                self.worker.make_critic(obs, action, reuse=True, scope="qf_1"))
+                self.worker.make_critic(obs, action, reuse=True, scope="qf_1")])
 
         # add final q value: https://openreview.net/forum?id=Skln2A4YDB
         if self.add_final_q_value:
@@ -1171,13 +1173,13 @@ class GoalConditionedPolicy(ActorCriticPolicy):
         # Log the max, min, mean, and std for each variable
         for grad, var in grads_and_vars:
             tf.compat.v1.summary.scalar(
-                'bptt/{}/mean'.format(var.name), tf.reduce_mean(grad))
+                '{}/bptt/mean'.format(var.name), tf.reduce_mean(grad))
             tf.compat.v1.summary.scalar(
-                'bptt/{}/std'.format(var.name), tf.math.reduce_std(grad))
+                '{}/bptt/std'.format(var.name), tf.math.reduce_std(grad))
             tf.compat.v1.summary.scalar(
-                'bptt/{}/max'.format(var.name), tf.reduce_max(grad))
+                '{}/bptt/max'.format(var.name), tf.reduce_max(grad))
             tf.compat.v1.summary.scalar(
-                'bptt/{}/min'.format(var.name), tf.reduce_min(grad))
+                '{}/bptt/min'.format(var.name), tf.reduce_min(grad))
 
         # Create the model optimization technique.
         self._multistep_llp_optimizer = optimizer.apply_gradients(
@@ -1303,15 +1305,22 @@ class GoalConditionedPolicy(ActorCriticPolicy):
 
         return loss, next_obs, next_goal
 
-    def _train_worker_model(self, worker_obses):
+    def _train_worker_model(self,
+                            worker_obs0,
+                            worker_obs1,
+                            worker_act):
         """Train the Worker actor and dynamics model.
 
         The original goal-less states and actions are used to train the model.
 
         Parameters
         ----------
-        worker_obses : array_like
-            full meta-period worker observations
+        worker_obs0 : array_like
+            worker observations at the current step
+        worker_obs1 : array_like
+            worker observations at the next step
+        worker_act : array_like
+            worker actions at the current step
 
         Returns
         -------
@@ -1324,7 +1333,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
         ]
 
         feed_dict = {
-            self.worker_obses_ph: worker_obses,
+            self.rollout_worker_obs: worker_obs0,
         }
 
         goal_dim = self.manager.ac_space.shape[0]
@@ -1332,9 +1341,6 @@ class GoalConditionedPolicy(ActorCriticPolicy):
         # Add the step ops and samples for each of the model training
         # operations in the ensemble.
         for i in range(self.num_ensembles):
-            # Sample new data for this model.
-            _, _, _, _, _, worker_obs0, worker_obs1, worker_act, _, _, _ = \
-                self.replay_buffer.sample(with_additional=False)
 
             # Add the training operation.
             step_ops.append(self.worker_model_optimizer[i])

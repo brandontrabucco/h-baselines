@@ -61,6 +61,11 @@ def get_hyperparameters(args, policy):
             "connected_gradients": args.connected_gradients,
             "cg_weights": args.cg_weights,
             "multistep_llp": args.multistep_llp,
+            "use_sample_not_mean": args.use_sample_not_mean,
+            "max_rollout_using_model": args.max_rollout_using_model,
+            "worker_dynamics_bptt_lr": args.worker_dynamics_bptt_lr,
+            "worker_model_bptt_lr": args.worker_model_bptt_lr,
+            "add_final_q_value": args.add_final_q_value,
             "num_ensembles": args.num_ensembles,
             "num_particles": args.num_particles,
             "use_fingerprints": args.use_fingerprints,
@@ -317,6 +322,31 @@ def create_goal_conditioned_parser(parser):
         action="store_true",
         help="whether to use the multi-step LLP update procedure. See: "
              "TODO")
+    parser.add_argument(
+        "--use_sample_not_mean",
+        action="store_true",
+        help="whether to use samples for predicting future states. See: "
+             "TODO")
+    parser.add_argument(
+        "--add_final_q_value",
+        action="store_true",
+        help="whether to add the final q value for the final state to actor loss. See: "
+             "TODO")
+    parser.add_argument(
+        "--max_rollout_using_model",
+        type=int,
+        default=GOAL_CONDITIONED_PARAMS["max_rollout_using_model"],
+        help="the number of states into the future to predict using a model")
+    parser.add_argument(
+        "--worker_dynamics_bptt_lr",
+        type=float,
+        default=GOAL_CONDITIONED_PARAMS["worker_dynamics_bptt_lr"],
+        help="learning rate for training the forward dynamics")
+    parser.add_argument(
+        "--worker_model_bptt_lr",
+        type=float,
+        default=GOAL_CONDITIONED_PARAMS["worker_model_bptt_lr"],
+        help="learning rate for training the worker policy using bptt")
     parser.add_argument(
         "--num_ensembles",
         type=int,
