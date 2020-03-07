@@ -27,6 +27,32 @@ then
         --relative_goals \
         --use_huber \
         --multistep_llp \
+        --max_rollout_using_model 1 \
+        --max_rollout_when_training 1 \
+        --seed $i
+  done
+
+  for ((i=0; i<3; i+=1))
+  do
+    python run_hrl.py "AntGather" \
+        --evaluate \
+        --total_steps 5000000 \
+        --relative_goals \
+        --use_huber \
+        --multistep_llp \
+        --max_rollout_using_model 2 \
+        --max_rollout_when_training 2 \
+        --seed $i
+  done
+
+  for ((i=0; i<3; i+=1))
+  do
+    python run_hrl.py "AntGather" \
+        --evaluate \
+        --total_steps 5000000 \
+        --relative_goals \
+        --use_huber \
+        --multistep_llp \
         --max_rollout_using_model 5 \
         --max_rollout_when_training 5 \
         --seed $i
