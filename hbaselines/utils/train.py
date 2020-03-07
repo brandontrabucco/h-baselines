@@ -338,6 +338,11 @@ def create_goal_conditioned_parser(parser):
         default=GOAL_CONDITIONED_PARAMS["max_rollout_using_model"],
         help="the number of states into the future to predict using a model")
     parser.add_argument(
+        "--max_rollout_when_training",
+        type=int,
+        default=GOAL_CONDITIONED_PARAMS["max_rollout_when_training"],
+        help="the number of states into the future to predict when training a model")
+    parser.add_argument(
         "--worker_dynamics_bptt_lr",
         type=float,
         default=GOAL_CONDITIONED_PARAMS["worker_dynamics_bptt_lr"],

@@ -117,7 +117,9 @@ GOAL_CONDITIONED_PARAMS.update(dict(
     # whether to use samples for predicting future states
     use_sample_not_mean=False,
     # the number of states into the future to predict using a model
-    max_rollout_using_model=10,
+    max_rollout_using_model=5,
+    # the number of states into the future to predict when training a model
+    max_rollout_when_training=1,
     # learning rate for training the forward dynamics
     worker_dynamics_bptt_lr=1e-6,
     # learning rate for training the worker policy using bptt

@@ -135,6 +135,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
                  multistep_llp,
                  use_sample_not_mean,
                  max_rollout_using_model,
+                 max_rollout_when_training,
                  worker_dynamics_bptt_lr,
                  worker_model_bptt_lr,
                  add_final_q_value,
@@ -212,6 +213,9 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             whether to use samples for predicting future states
         max_rollout_using_model : int
             the number of states into the future to predict using a model
+        max_rollout_when_training : int
+            the number of states into the future to predict using a model
+            when training the model
         worker_dynamics_bptt_lr : float
             dynamics learning rate
         worker_model_bptt_lr : float
@@ -269,6 +273,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
         self.multistep_llp = multistep_llp
         self.use_sample_not_mean = use_sample_not_mean
         self.max_rollout_using_model = max_rollout_using_model
+        self.max_rollout_when_training = max_rollout_when_training
         self.worker_dynamics_bptt_lr = worker_dynamics_bptt_lr
         self.worker_model_bptt_lr = worker_model_bptt_lr
         self.add_final_q_value = add_final_q_value
@@ -536,7 +541,9 @@ class GoalConditionedPolicy(ActorCriticPolicy):
         if self.multistep_llp:
             w_actor_loss += self._train_worker_model(worker_obs0,
                                                      worker_obs1,
-                                                     worker_act)
+                                                     worker_act,
+                                                     additional["worker_obses"],
+                                                     additional["worker_actions"])
 
         return (m_critic_loss, w_critic_loss), (m_actor_loss, w_actor_loss)
 
@@ -680,15 +687,27 @@ class GoalConditionedPolicy(ActorCriticPolicy):
         td_map.update(self.worker.get_td_map_from_batch(
             worker_obs0, worker_act, worker_rew, worker_obs1, worker_done))
 
+        worker_obs_seq = additional['worker_obses']
+        worker_act_seq = additional['worker_actions']
+
         goal_dim = self.manager.ac_space.shape[0]
+        seq_len = worker_act_seq.shape[2]
+
+        # TODO: time step is the last dim
+        worker_obs_seq = worker_obs_seq.transpose(0, 2, 1)
+        worker_act_seq = worker_act_seq.transpose(0, 2, 1)
+
+        slots = seq_len - self.max_rollout_when_training - 1
+        start = np.random.randint(0, slots, [])
+        end = start + self.max_rollout_when_training
 
         if self.multistep_llp:
             for i in range(self.num_ensembles):
 
                 td_map.update({
-                    self.worker_obs_ph[i]: worker_obs0[:, :-goal_dim],
-                    self.worker_obs1_ph[i]: worker_obs1[:, :-goal_dim],
-                    self.worker_action_ph[i]: worker_act,
+                    self.worker_obs_ph[i]: worker_obs_seq[:, start:end, :-goal_dim],
+                    self.worker_obs1_ph[i]: worker_obs_seq[:, start + 1:end + 1, :-goal_dim],
+                    self.worker_action_ph[i]: worker_act_seq[:, start:end, :],
                     self.rollout_worker_obs: worker_obs0
                 })
 
@@ -1013,45 +1032,53 @@ class GoalConditionedPolicy(ActorCriticPolicy):
                 # Create placeholders for the model.
                 self.worker_obs_ph.append(tf.compat.v1.placeholder(
                     tf.float32,
-                    shape=(None,) + self.worker.ob_space.shape,
+                    shape=(None, self.max_rollout_when_training) + self.worker.ob_space.shape,
                     name="worker_obs0_{}".format(i)))
                 self.worker_obs1_ph.append(tf.compat.v1.placeholder(
                     tf.float32,
-                    shape=(None,) + self.worker.ob_space.shape,
+                    shape=(None, self.max_rollout_when_training) + self.worker.ob_space.shape,
                     name="worker_obs1_{}".format(i)))
                 self.worker_action_ph.append(tf.compat.v1.placeholder(
                     tf.float32,
-                    shape=(None,) + self.worker.ac_space.shape,
+                    shape=(None, self.max_rollout_when_training) + self.worker.ac_space.shape,
                     name="worker_action_{}".format(i)))
 
-                # Create a trainable model of the Worker dynamics.
-                worker_model, mean, logstd = self._setup_worker_model(
-                    obs=self.worker_obs_ph[-1],
-                    action=self.worker_action_ph[-1],
-                    ob_space=self.worker.ob_space,
-                    scope="rho_{}".format(i))
-                self.worker_model.append(worker_model)
-
-                # The worker model is trained to learn the change in state
-                # between two time-steps.
-                delta = self.worker_obs1_ph[-1] - self.worker_obs_ph[-1]
-
-                # Computes the log probability of choosing a specific output -
-                # used by the loss
-                dist = tfp.distributions.MultivariateNormalDiag(
-                    loc=mean,
-                    scale_diag=tf.exp(logstd))
-                rho_logp = dist.log_prob(delta)
-
-                # Create the model loss.
-                worker_model_loss = -tf.reduce_mean(rho_logp)
+                ob_pred = self.worker_obs_ph[-1][:, 0, :]
 
                 # The additional loss term is in accordance with:
                 # https://github.com/kchua/handful-of-trials
-                worker_model_loss += \
-                    0.01 * tf.reduce_sum(self.max_logstd) - \
-                    0.01 * tf.reduce_sum(self.min_logstd)
+                worker_model_loss = (0.01 * tf.reduce_sum(self.max_logstd) -
+                                     0.01 * tf.reduce_sum(self.min_logstd))
 
+                # Create a trainable model of the Worker dynamics.
+                for t in range(self.max_rollout_when_training):
+
+                    worker_model, mean, logstd = self._setup_worker_model(
+                        obs=ob_pred,
+                        action=self.worker_action_ph[-1][:, t, :],
+                        ob_space=self.worker.ob_space,
+                        scope="rho_{}".format(i),
+                        reuse=t > 0)
+
+                    ob_pred = worker_model
+
+                    # The worker model is trained to learn the change in state
+                    # between two time-steps.
+                    delta = (self.worker_obs1_ph[-1][:, t, :] -
+                             self.worker_obs_ph[-1][:, t, :])
+
+                    # Computes the log probability of choosing a specific output -
+                    # used by the loss
+                    dist = tfp.distributions.MultivariateNormalDiag(
+                        loc=mean,
+                        scale_diag=tf.exp(logstd))
+                    rho_logp = dist.log_prob(delta)
+
+                    # Create the model loss.
+                    worker_model_loss -= tf.reduce_mean(
+                        rho_logp) / self.max_rollout_when_training
+
+                self.worker_model.append(worker_model)
                 self.worker_model_loss.append(worker_model_loss)
 
                 # Create an optimizer object.
@@ -1309,7 +1336,10 @@ class GoalConditionedPolicy(ActorCriticPolicy):
     def _train_worker_model(self,
                             worker_obs0,
                             worker_obs1,
-                            worker_act):
+                            worker_act,
+                            worker_obs_seq,
+                            worker_act_seq,
+                            ):
         """Train the Worker actor and dynamics model.
 
         The original goal-less states and actions are used to train the model.
@@ -1338,6 +1368,11 @@ class GoalConditionedPolicy(ActorCriticPolicy):
         }
 
         goal_dim = self.manager.ac_space.shape[0]
+        seq_len = worker_obs_seq.shape[2]
+
+        # TODO: time step is the last dim
+        worker_obs_seq = worker_obs_seq.transpose(0, 2, 1)
+        worker_act_seq = worker_act_seq.transpose(0, 2, 1)
 
         # Add the step ops and samples for each of the model training
         # operations in the ensemble.
@@ -1346,11 +1381,15 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             # Add the training operation.
             step_ops.append(self.worker_model_optimizer[i])
 
+            slots = seq_len - self.max_rollout_when_training - 1
+            start = np.random.randint(0, slots, [])
+            end = start + self.max_rollout_when_training
+
             # Add the samples to the feed_dict.
             feed_dict.update({
-                self.worker_obs_ph[i]: worker_obs0[:, :-goal_dim],
-                self.worker_obs1_ph[i]: worker_obs1[:, :-goal_dim],
-                self.worker_action_ph[i]: worker_act
+                self.worker_obs_ph[i]: worker_obs_seq[:, start:end, :-goal_dim],
+                self.worker_obs1_ph[i]: worker_obs_seq[:, start + 1:end + 1, :-goal_dim],
+                self.worker_action_ph[i]: worker_act_seq[:, start:end, :]
             })
 
         # Run the training operations.
