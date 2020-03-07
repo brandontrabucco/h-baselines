@@ -50,6 +50,33 @@ then
 elif [ $VAR == "maac_mb" ]
 then
   echo "Running Model Augmented LLP (mean rollout) HRL"
+
+  for ((i=0; i<3; i+=1))
+  do
+    python run_hrl.py "AntGather" \
+        --evaluate \
+        --total_steps 5000000 \
+        --relative_goals \
+        --use_huber \
+        --multistep_llp \
+        --max_rollout_using_model 1 \
+        --add_final_q_value \
+        --seed $i
+  done
+
+  for ((i=0; i<3; i+=1))
+  do
+    python run_hrl.py "AntGather" \
+        --evaluate \
+        --total_steps 5000000 \
+        --relative_goals \
+        --use_huber \
+        --multistep_llp \
+        --max_rollout_using_model 2 \
+        --add_final_q_value \
+        --seed $i
+  done
+
   for ((i=0; i<3; i+=1))
   do
     python run_hrl.py "AntGather" \
