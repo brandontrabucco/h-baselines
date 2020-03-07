@@ -5,7 +5,7 @@ read VAR
 
 if [ $VAR == "td3" ]
 then
-  echo "Running standard TD3 HRL"
+  echo "Running TD3 HRL"
   for ((i=0; i<3; i+=1))
   do
     python run_hrl.py "AntGather" \
@@ -18,7 +18,7 @@ then
 
 elif [ $VAR == "mean_mb" ]
 then
-  echo "Running standard Model Based LLP (mean rollout) HRL"
+  echo "Running Model Based LLP (mean rollout) HRL"
   for ((i=0; i<3; i+=1))
   do
     python run_hrl.py "AntGather" \
@@ -33,7 +33,7 @@ then
 
 elif [ $VAR == "sample_mb" ]
 then
-  echo "Running standard Model Based LLP (sample rollout) HRL"
+  echo "Running Model Based LLP (sample rollout) HRL"
   for ((i=0; i<3; i+=1))
   do
     python run_hrl.py "AntGather" \
@@ -49,7 +49,7 @@ then
 
 elif [ $VAR == "maac_mb" ]
 then
-  echo "Running standard Model Augmented LLP (mean rollout) HRL"
+  echo "Running Model Augmented LLP (mean rollout) HRL"
   for ((i=0; i<3; i+=1))
   do
     python run_hrl.py "AntGather" \

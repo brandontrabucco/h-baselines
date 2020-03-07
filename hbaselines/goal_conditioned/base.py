@@ -530,7 +530,8 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             rewards=worker_rew,
             obs1=worker_obs1,
             terminals1=worker_done,
-            update_actor=update_actor and not self.multistep_llp)
+            update_actor=update_actor and not self.multistep_llp,
+            update_target=update_actor)
 
         if self.multistep_llp:
             w_actor_loss += self._train_worker_model(worker_obs0,

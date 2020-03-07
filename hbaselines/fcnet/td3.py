@@ -510,7 +510,7 @@ class FeedForwardPolicy(ActorCriticPolicy):
 
         return qvalue_fn
 
-    def update(self, update_actor=True, **kwargs):
+    def update(self, update_actor=True, update_target=True, **kwargs):
         """Perform a gradient update step.
 
         **Note**; The target update soft updates occur at the same frequency as
@@ -520,6 +520,9 @@ class FeedForwardPolicy(ActorCriticPolicy):
         ----------
         update_actor : bool
             specifies whether to update the actor policy. The critic policy is
+            still updated if this value is set to False.
+        update_target : bool
+            specifies whether to update the target networks. The critic policy is
             still updated if this value is set to False.
 
         Returns
@@ -537,7 +540,8 @@ class FeedForwardPolicy(ActorCriticPolicy):
         obs0, actions, rewards, obs1, terminals1 = self.replay_buffer.sample()
 
         return self.update_from_batch(obs0, actions, rewards, obs1, terminals1,
-                                      update_actor=update_actor)
+                                      update_actor=update_actor,
+                                      update_target=update_target)
 
     def update_from_batch(self,
                           obs0,
@@ -545,7 +549,8 @@ class FeedForwardPolicy(ActorCriticPolicy):
                           rewards,
                           obs1,
                           terminals1,
-                          update_actor=True):
+                          update_actor=True,
+                          update_target=True):
         """Perform gradient update step given a batch of data.
 
         Parameters
@@ -565,6 +570,9 @@ class FeedForwardPolicy(ActorCriticPolicy):
             specified whether to perform gradient update procedures to the
             actor policy. Default set to True. Note that the update procedure
             for the critic is always performed when calling this method.
+        update_target : bool
+            specifies whether to update the target networks. The critic policy is
+            still updated if this value is set to False.
 
         Returns
         -------
@@ -585,8 +593,11 @@ class FeedForwardPolicy(ActorCriticPolicy):
         if update_actor:
             # Actor updates and target soft update operation.
             step_ops += [self.actor_loss,
-                         self.actor_optimizer,
-                         self.target_soft_updates]
+                         self.actor_optimizer]
+
+        if update_target:
+            # Actor updates and target soft update operation.
+            step_ops += [self.target_soft_updates]
 
         # Perform the update operations and collect the critic loss.
         critic_loss, *_vals = self.sess.run(step_ops, feed_dict={
