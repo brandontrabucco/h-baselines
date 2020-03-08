@@ -1175,21 +1175,22 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             # Add the next loss to the multi-step LLP loss.
             self._multistep_llp_loss += loss / self.num_particles
 
+            # calculate the q value at the end of the k step rollout
+            obs = tf.concat((obs1, goal), axis=1)
+            with tf.compat.v1.variable_scope("Worker/model"):
+                action = self.worker.make_actor(obs, reuse=True)
+                qvalue = tf.reduce_mean([
+                    self.worker.make_critic(obs, action, reuse=True, scope="qf_0"),
+                    self.worker.make_critic(obs, action, reuse=True, scope="qf_1")])
+
+            # add final q value: https://openreview.net/forum?id=Skln2A4YDB
+            if self.add_final_q_value:
+                self._multistep_llp_loss -= (
+                    self.worker.gamma ** horizon) * qvalue
+
             # Add the final loss for tensorboard logging.
             tf.compat.v1.summary.scalar(
                 'Worker/worker_model_loss', self._multistep_llp_loss)
-
-        # calculate the q value at the end of the k step rollout
-        obs = tf.concat((obs1, goal), axis=1)
-        with tf.compat.v1.variable_scope("Worker/model"):
-            action = self.worker.make_actor(obs, reuse=True)
-            qvalue = tf.reduce_mean([
-                self.worker.make_critic(obs, action, reuse=True, scope="qf_0"),
-                self.worker.make_critic(obs, action, reuse=True, scope="qf_1")])
-
-        # add final q value: https://openreview.net/forum?id=Skln2A4YDB
-        if self.add_final_q_value:
-            loss -= (self.worker.gamma ** horizon) * qvalue
 
         # Create an optimizer object.
         optimizer = tf.compat.v1.train.AdamOptimizer(self.worker_model_bptt_lr)

@@ -63,6 +63,7 @@ def get_hyperparameters(args, policy):
             "multistep_llp": args.multistep_llp,
             "use_sample_not_mean": args.use_sample_not_mean,
             "max_rollout_using_model": args.max_rollout_using_model,
+            "max_rollout_when_training": args.max_rollout_when_training,
             "worker_dynamics_bptt_lr": args.worker_dynamics_bptt_lr,
             "worker_model_bptt_lr": args.worker_model_bptt_lr,
             "add_final_q_value": args.add_final_q_value,
