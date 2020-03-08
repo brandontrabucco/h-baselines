@@ -1188,9 +1188,9 @@ class GoalConditionedPolicy(ActorCriticPolicy):
                 self._multistep_llp_loss -= (
                     self.worker.gamma ** horizon) * qvalue
 
-            # Add the final loss for tensorboard logging.
-            tf.compat.v1.summary.scalar(
-                'Worker/worker_model_loss', self._multistep_llp_loss)
+        # Add the final loss for tensorboard logging.
+        tf.compat.v1.summary.scalar(
+            'Worker/worker_model_loss', self._multistep_llp_loss)
 
         # Create an optimizer object.
         optimizer = tf.compat.v1.train.AdamOptimizer(self.worker_model_bptt_lr)
