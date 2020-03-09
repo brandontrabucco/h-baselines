@@ -1026,7 +1026,7 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             self.min_logstd = tf.Variable(
                 -np.ones([1, ob_dim]) * 10.0,
                 dtype=tf.float32,
-                name="max_log_std")
+                name="min_log_std")
 
             for i in range(self.num_ensembles):
                 # Create placeholders for the model.
@@ -1087,8 +1087,9 @@ class GoalConditionedPolicy(ActorCriticPolicy):
                 # Create the model optimization technique.
                 worker_model_optimizer = optimizer.minimize(
                     worker_model_loss,
-                    var_list=get_trainable_vars(
-                        'Worker/dynamics/rho_{}'.format(i)))
+                    var_list=[self.max_logstd,
+                              self.min_logstd,
+                              *get_trainable_vars('Worker/dynamics/rho_{}'.format(i))])
                 self.worker_model_optimizer.append(worker_model_optimizer)
 
                 # Add the model loss and dynamics to the tensorboard log.
