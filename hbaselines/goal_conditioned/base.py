@@ -1028,6 +1028,11 @@ class GoalConditionedPolicy(ActorCriticPolicy):
                 dtype=tf.float32,
                 name="min_log_std")
 
+            tf.compat.v1.summary.scalar(
+                'Worker/worker_model_max_logstd', tf.reduce_mean(self.max_logstd))
+            tf.compat.v1.summary.scalar(
+                'Worker/worker_model_min_logstd', tf.reduce_mean(self.min_logstd))
+
             for i in range(self.num_ensembles):
                 # Create placeholders for the model.
                 self.worker_obs_ph.append(tf.compat.v1.placeholder(
@@ -1274,6 +1279,11 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             rho_logstd = rho_logvar / 2.
 
             rho_std = tf.exp(rho_logstd)
+
+            tf.compat.v1.summary.scalar(
+                'Worker/worker_model_{}_rho_mean'.format(scope), tf.reduce_mean(rho_mean))
+            tf.compat.v1.summary.scalar(
+                'Worker/worker_model_{}_rho_std'.format(scope), tf.reduce_mean(rho_std))
 
             # The model samples from its distribution.
             rho = rho_mean + tf.random.normal(tf.shape(rho_mean)) * rho_std
