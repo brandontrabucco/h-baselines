@@ -6,6 +6,7 @@ import random
 import numpy as np
 import tensorflow as tf
 import json
+from skvideo.io import FFmpegWriter
 
 from hbaselines.algorithms import OffPolicyRLAlgorithm
 from hbaselines.fcnet.td3 import FeedForwardPolicy
@@ -45,6 +46,8 @@ def parse_options(args):
         '--num_rollouts', type=int, default=1, help='number of eval episodes')
     parser.add_argument(
         '--no_render', action='store_true', help='shuts off rendering')
+    parser.add_argument(
+        '--video', type=str, default='output.mp4', help='path to the video to render')
 
     flags, _ = parser.parse_known_args(args)
 
@@ -99,6 +102,10 @@ def main(args):
     env_name, policy, hp, seed = get_hyperparameters_from_dir(flags.dir_name)
     hp['render'] = not flags.no_render  # to visualize the policy
 
+    print(hp.keys())
+    del hp['algorithm']
+    del hp['date/time']
+
     # create the algorithm object. We will be using the eval environment in
     # this object to perform the rollout.
     alg = OffPolicyRLAlgorithm(
@@ -135,6 +142,8 @@ def main(args):
 
     # Perform the evaluation procedure.
     episdoe_rewards = []
+    if not flags.no_render:
+        out = FFmpegWriter(flags.video)
 
     for episode_num in range(flags.num_rollouts):
         # Run a rollout.
@@ -151,7 +160,8 @@ def main(args):
             )
             obs, reward, done, _ = env.step(action)
             if not flags.no_render:
-                env.render()
+                frame = env.render(mode='rgb_array')
+                out.writeFrame(frame)
             total_reward += reward
             if done:
                 break
@@ -159,6 +169,9 @@ def main(args):
         # Print total returns from a given episode.
         episdoe_rewards.append(total_reward)
         print("Round {}, return: {}".format(episode_num, total_reward))
+
+    if not flags.no_render:
+        out.close()
 
     # Print total statistics.
     print("Average, std return: {}, {}".format(
