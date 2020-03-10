@@ -48,7 +48,7 @@ then
         --use_huber \
         --multistep_llp \
         --max_rollout_using_model $VAR1 \
-        --max_rollout_when_training $VAR1 \
+        --max_rollout_when_training 1 \
         --add_final_q_value \
         --seed $i
   done
