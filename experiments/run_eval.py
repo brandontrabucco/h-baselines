@@ -145,30 +145,37 @@ def main(args):
     if not flags.no_render:
         out = FFmpegWriter(flags.video)
 
-    for episode_num in range(flags.num_rollouts):
-        # Run a rollout.
-        obs = env.reset()
-        total_reward = 0
-        while True:
-            context = [env.current_context] \
-                if hasattr(env, "current_context") else None
-            action = policy.get_action(
-                np.asarray([obs]),
-                context=context,
-                apply_noise=False,
-                random_actions=False,
-            )
-            obs, reward, done, _ = env.step(action)
-            if not flags.no_render:
-                frame = env.render(mode='rgb_array')
-                out.writeFrame(frame)
-            total_reward += reward
-            if done:
-                break
+    if not isinstance(env, list):
+        env_list = [env]
+    else:
+        env_list = env
 
-        # Print total returns from a given episode.
-        episdoe_rewards.append(total_reward)
-        print("Round {}, return: {}".format(episode_num, total_reward))
+    for env in env_list:
+
+        for episode_num in range(flags.num_rollouts):
+            # Run a rollout.
+            obs = env.reset()
+            total_reward = 0
+            while True:
+                context = [env.current_context] \
+                    if hasattr(env, "current_context") else None
+                action = policy.get_action(
+                    np.asarray([obs]),
+                    context=context,
+                    apply_noise=False,
+                    random_actions=False,
+                )
+                obs, reward, done, _ = env.step(action)
+                if not flags.no_render:
+                    frame = env.render(mode='rgb_array')
+                    out.writeFrame(frame)
+                total_reward += reward
+                if done:
+                    break
+
+            # Print total returns from a given episode.
+            episdoe_rewards.append(total_reward)
+            print("Round {}, return: {}".format(episode_num, total_reward))
 
     if not flags.no_render:
         out.close()

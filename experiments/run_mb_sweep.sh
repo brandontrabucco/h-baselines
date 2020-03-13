@@ -11,9 +11,9 @@ then
   echo "Running TD3 HRL"
   for ((i=0; i<3; i+=1))
   do
-    python run_hrl.py "AntGather" \
+    python run_hrl.py "AntMaze" \
         --evaluate \
-        --total_steps 5000000 \
+        --total_steps 10000000 \
         --relative_goals \
         --use_huber \
         --seed $i
@@ -24,9 +24,9 @@ then
   echo "Running Model Based LLP (no teacher forcing) HRL"
   for ((i=0; i<3; i+=1))
   do
-    python run_hrl.py "AntGather" \
+    python run_hrl.py "AntMaze" \
         --evaluate \
-        --total_steps 5000000 \
+        --total_steps 10000000 \
         --relative_goals \
         --use_huber \
         --multistep_llp \
@@ -41,9 +41,9 @@ then
 
   for ((i=0; i<3; i+=1))
   do
-    python run_hrl.py "AntGather" \
+    python run_hrl.py "AntMaze" \
         --evaluate \
-        --total_steps 5000000 \
+        --total_steps 10000000 \
         --relative_goals \
         --use_huber \
         --multistep_llp \
