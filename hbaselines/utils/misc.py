@@ -15,6 +15,7 @@ from hbaselines.envs.efficient_hrl.envs import AntFall
 from hbaselines.envs.efficient_hrl.envs import AntPush
 from hbaselines.envs.efficient_hrl.envs import AntFourRooms
 from hbaselines.envs.hac.envs import UR5, Pendulum
+from hbaselines.envs.point2d import Point2DEnv
 try:
     from hbaselines.envs.snn4hrl.envs import AntGatherEnv
 except (ImportError, ModuleNotFoundError):
@@ -81,6 +82,14 @@ def get_manager_ac_space(ob_space,
         manager_ac_space = Box(
             low=np.array([-np.pi, -15]),
             high=np.array([np.pi, 15]),
+            dtype=np.float32
+        )
+    elif env_name == "Point2DEnv":
+        # TODO
+        # Do not change the default boundary distance
+        manager_ac_space = Box(
+            np.ones(2) * -4,
+            np.ones(2),
             dtype=np.float32
         )
     elif env_name in ["ring0", "ring1"]:
@@ -163,6 +172,8 @@ def get_goal_indices(ob_space,
         state_indices = None
     elif env_name == "Pendulum":
         state_indices = [0, 2]
+    elif env_name == "Point2DEnv":
+        state_indices = [0, 1]
     elif env_name in ["ring0", "ring1"]:
         state_indices = [0]
     elif env_name == "figureeight0":
@@ -296,6 +307,9 @@ def create_env(env, render=False, evaluate=False):
                            context_range=[(np.deg2rad(-16), np.deg2rad(16)),
                                           (-0.6, 0.6)],
                            show=render)
+
+    elif env in ["Point2DEnv"]:
+        env = Point2DEnv()
 
     elif env in ["bottleneck0", "bottleneck1", "bottleneck2", "grid0",
                  "grid1"]:
