@@ -71,6 +71,8 @@ class Point2DEnv(MultitaskEnv, Serializable):
 
         self.drawer = None
         self.render_drawer = None
+        self.horizon = 200
+        self.t = 0
 
     @property
     def context_space(self):
@@ -101,6 +103,8 @@ class Point2DEnv(MultitaskEnv, Serializable):
                     self._position, new_position
                 )
 
+        self.t += 1
+
         self._position = new_position
         self._position = np.clip(
             self._position,
@@ -113,7 +117,7 @@ class Point2DEnv(MultitaskEnv, Serializable):
         is_success = distance_to_target < self.target_radius
 
         ob = self._get_obs()
-        reward = self.compute_reward(velocities, ob)
+        reward = self.compute_reward(velocities, {'ob': ob})
         info = {
             'radius': self.target_radius,
             'target_position': self._target_position,
@@ -122,11 +126,12 @@ class Point2DEnv(MultitaskEnv, Serializable):
             'speed': np.linalg.norm(velocities),
             'is_success': is_success,
         }
-        done = False
+        done = self.t >= self.horizon
         return ob, reward, done, info
 
     def reset(self):
-        self._target_position = self.sample_goal()
+        self.t = 0
+        self._target_position = self.sample_goal()['goals']
         if self.randomize_position_on_reset:
             self._position = self._sample_position(
                 self.obs_range.low,
@@ -151,7 +156,7 @@ class Point2DEnv(MultitaskEnv, Serializable):
         return self._position.copy()
 
     def compute_rewards(self, actions, obs):
-        achieved_goals = obs
+        achieved_goals = obs['ob']
         desired_goals = self.target_radius
         d = np.linalg.norm(achieved_goals - desired_goals, axis=-1)
         if self.reward_type == "sparse":
@@ -182,7 +187,7 @@ class Point2DEnv(MultitaskEnv, Serializable):
                     self.obs_range.low,
                     self.obs_range.high,
                 )
-        return goals
+        return {'goals': goals}
 
     def set_position(self, pos):
         self._position[0] = pos[0]
