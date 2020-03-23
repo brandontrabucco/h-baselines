@@ -152,9 +152,27 @@ def main(args):
 
     for env in env_list:
 
+        env.images_are_rgb = True
+        env.boundary_dist = 4.
+
         for episode_num in range(flags.num_rollouts):
             # Run a rollout.
             obs = env.reset()
+            
+            import matplotlib.pyplot as plt
+
+            goal_dim = env.current_context.shape[0]
+            goal = env.current_context - obs[:goal_dim]
+
+            o = np.concatenate([obs, goal], 0).astype(np.float32)
+            states, actions = policy.predict_trajectory(o[np.newaxis, :])
+            states = states[0]
+            actions = actions[0]
+            plt.figure()
+            ax = plt.subplot(111)
+            env.plot_trajectory(ax, states, actions, goal=env.current_context)
+            plt.savefig('episode{}.png'.format(episode_num))
+
             total_reward = 0
             while True:
                 context = [env.current_context] \
@@ -165,7 +183,7 @@ def main(args):
                     apply_noise=False,
                     random_actions=False,
                 )
-                obs, reward, done, _ = env.step(action)
+                obs, reward, done, _ = env.step(action[0])
                 if not flags.no_render:
                     frame = env.render(mode='rgb_array')
                     out.writeFrame(frame)

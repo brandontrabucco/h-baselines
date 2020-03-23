@@ -157,7 +157,7 @@ class Point2DEnv(MultitaskEnv, Serializable):
 
     def compute_rewards(self, actions, obs):
         achieved_goals = obs['ob']
-        desired_goals = self.target_radius
+        desired_goals = self._target_position
         d = np.linalg.norm(achieved_goals - desired_goals, axis=-1)
         if self.reward_type == "sparse":
             return -(d > self.target_radius).astype(np.float32)
@@ -254,6 +254,10 @@ class Point2DEnv(MultitaskEnv, Serializable):
         drawer.render()
 
     def render(self, mode='human', close=False):
+
+        if mode == 'rgb_array':
+            return self.get_image(self.render_size, self.render_size)
+
         if close:
             self.render_drawer = None
             return
@@ -293,8 +297,7 @@ class Point2DEnv(MultitaskEnv, Serializable):
             state = next_state
         return real_states
 
-    @staticmethod
-    def plot_trajectory(ax, states, actions, goal=None):
+    def plot_trajectory(self, ax, states, actions, goal=None):
         assert len(states) == len(actions) + 1
         x = states[:, 0]
         y = -states[:, 1]
@@ -316,45 +319,45 @@ class Point2DEnv(MultitaskEnv, Serializable):
                   width=0.0035, )
         ax.plot(
             [
-                -Point2DEnv.boundary_dist,
-                -Point2DEnv.boundary_dist,
+                -self.boundary_dist,
+                -self.boundary_dist,
             ],
             [
-                Point2DEnv.boundary_dist,
-                -Point2DEnv.boundary_dist,
-            ],
-            color='k', linestyle='-',
-        )
-        ax.plot(
-            [
-                Point2DEnv.boundary_dist,
-                -Point2DEnv.boundary_dist,
-            ],
-            [
-                Point2DEnv.boundary_dist,
-                Point2DEnv.boundary_dist,
+                self.boundary_dist,
+                -self.boundary_dist,
             ],
             color='k', linestyle='-',
         )
         ax.plot(
             [
-                Point2DEnv.boundary_dist,
-                Point2DEnv.boundary_dist,
+                self.boundary_dist,
+                -self.boundary_dist,
             ],
             [
-                Point2DEnv.boundary_dist,
-                -Point2DEnv.boundary_dist,
+                self.boundary_dist,
+                self.boundary_dist,
             ],
             color='k', linestyle='-',
         )
         ax.plot(
             [
-                Point2DEnv.boundary_dist,
-                -Point2DEnv.boundary_dist,
+                self.boundary_dist,
+                self.boundary_dist,
             ],
             [
-                -Point2DEnv.boundary_dist,
-                -Point2DEnv.boundary_dist,
+                self.boundary_dist,
+                -self.boundary_dist,
+            ],
+            color='k', linestyle='-',
+        )
+        ax.plot(
+            [
+                self.boundary_dist,
+                -self.boundary_dist,
+            ],
+            [
+                -self.boundary_dist,
+                -self.boundary_dist,
             ],
             color='k', linestyle='-',
         )
@@ -362,10 +365,10 @@ class Point2DEnv(MultitaskEnv, Serializable):
         if goal is not None:
             ax.plot(goal[0], -goal[1], marker='*', color='g', markersize=15)
         ax.set_ylim(
-            -Point2DEnv.boundary_dist - 1,
-            Point2DEnv.boundary_dist + 1,
+            -self.boundary_dist - 1,
+            self.boundary_dist + 1,
         )
         ax.set_xlim(
-            -Point2DEnv.boundary_dist - 1,
-            Point2DEnv.boundary_dist + 1,
+            -self.boundary_dist - 1,
+            self.boundary_dist + 1,
         )

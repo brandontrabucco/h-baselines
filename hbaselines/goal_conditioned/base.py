@@ -1132,6 +1132,8 @@ class GoalConditionedPolicy(ActorCriticPolicy):
         # Compute the cumulative, discounted model-based loss using outputs
         # from the Worker's trainable model.
         self._multistep_llp_loss = 0
+        self.dynamics_model_predictions = [[] for i in range(self.num_particles)]
+        self.dynamics_model_actions = [[] for i in range(self.num_particles)]
 
         for i in range(self.num_particles):
             # FIXME: should we choose dynamically?
@@ -1157,6 +1159,9 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             loss, obs1, goal = self._get_step_loss(
                 obs, action, goal, model_index)
 
+            self.dynamics_model_predictions[i].append(obs1)
+            self.dynamics_model_actions[i].append(action)
+
             horizon = min(self.max_rollout_using_model, self.meta_period)
 
             # Repeat the process for the meta-period.
@@ -1174,6 +1179,9 @@ class GoalConditionedPolicy(ActorCriticPolicy):
                 # Collect the next loss, observation, and goal.
                 next_loss, obs1, goal = self._get_step_loss(
                     obs1, action, goal, model_index)
+
+                self.dynamics_model_predictions[i].append(obs1)
+                self.dynamics_model_actions[i].append(action)
 
                 # Add the next loss to the discounted sum.
                 loss += (self.worker.gamma ** j) * next_loss
@@ -1193,6 +1201,11 @@ class GoalConditionedPolicy(ActorCriticPolicy):
             if self.add_final_q_value:
                 self._multistep_llp_loss -= (
                     self.worker.gamma ** horizon) * qvalue
+
+        self.dynamics_model_predictions = tf.reduce_mean(
+            self.dynamics_model_predictions, axis=0)
+        self.dynamics_model_actions = tf.reduce_mean(
+            self.dynamics_model_actions, axis=0)
 
         # Add the final loss for tensorboard logging.
         tf.compat.v1.summary.scalar(
@@ -1408,3 +1421,19 @@ class GoalConditionedPolicy(ActorCriticPolicy):
         worker_loss, *_ = self.sess.run(step_ops, feed_dict=feed_dict)
 
         return worker_loss
+
+    def predict_trajectory(self,
+                           initial_states):
+        o, a = self.sess.run(
+            [self.dynamics_model_predictions, 
+             self.dynamics_model_actions], feed_dict={
+                self.rollout_worker_obs: initial_states})
+       
+        goal_dim = self.manager.ac_space.shape[0]
+
+        o = np.concatenate([initial_states[np.newaxis, :, :-goal_dim], o], 0)
+        o = np.transpose(o, [1, 0, 2])
+        a = np.transpose(a, [1, 0, 2])
+        return o, a
+
+
