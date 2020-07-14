@@ -83,8 +83,9 @@ def main(args, base_dir):
         now = strftime("%Y-%m-%d-%H:%M:%S")
 
         # Create a save directory folder (if it doesn't exist).
-        if args.dir_name is '':
-            dir_name = os.path.join(base_dir, '{}/{}'.format(args.env_name, now))
+        if args.dir_name == '':
+            dir_name = os.path.join(
+                base_dir, '{}/{}'.format(args.env_name, now))
         else:
             dir_name = args.dir_name
         ensure_dir(dir_name)
@@ -128,13 +129,12 @@ def main(args, base_dir):
 
 
 if __name__ == '__main__':
-    # collect arguments
-    args = parse_options(
-        description='Test the performance of goal-conditioned hierarchical '
-                    'models on various environments.',
-        example_usage=EXAMPLE_USAGE,
-        args=sys.argv[1:]
+    main(
+        parse_options(
+            description='Test the performance of goal-conditioned '
+                        'hierarchical models on various environments.',
+            example_usage=EXAMPLE_USAGE,
+            args=sys.argv[1:]
+        ),
+        'data/goal-conditioned'
     )
-
-    # execute the training procedure
-    main(args, 'data/goal-conditioned')
