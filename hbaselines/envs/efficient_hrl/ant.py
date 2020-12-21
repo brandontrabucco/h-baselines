@@ -111,7 +111,7 @@ class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         """Advance the simulation by one step."""
         xposbefore = self.get_body_com("torso")[0]
         self.do_simulation(a, self.frame_skip)
-        self.set_to_goal()
+        #self.set_to_goal() this used to be necessary but appears to not be needed
         xposafter = self.get_body_com("torso")[0]
         forward_reward = (xposafter - xposbefore) / self.dt
         ctrl_cost = .5 * np.square(a).sum()

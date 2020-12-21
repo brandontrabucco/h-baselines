@@ -15,3 +15,19 @@ for pre_exp_reward_scale in 1.0 2.0 10.0; do
         sleep 5
     done
 done
+
+
+python run_hrl.py "ImageAntMaze" \
+  --total_steps 5000000 \
+  --relative_goals \
+  --use_huber \
+  --save_interval 100000 \
+  --cooperative_gradients \
+  --cg_weights 0.01 \
+  --initial_exploration_steps 10000 \
+  --buffer_size 100000 \
+  --batch_size 128 \
+  --model_params:model_type conv \
+  --model_params:image_height 32 \
+  --model_params:image_width 32 \
+  --model_params:image_channels 3 \

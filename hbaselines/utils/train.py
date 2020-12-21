@@ -109,8 +109,6 @@ def get_hyperparameters(args, policy):
             "meta_period": args.meta_period,
             "intrinsic_reward_type": args.intrinsic_reward_type,
             "intrinsic_reward_scale": args.intrinsic_reward_scale,
-            "pre_exp_reward_scale": args.pre_exp_reward_scale,
-            "pre_exp_reward_shift": args.pre_exp_reward_shift,
             "relative_goals": args.relative_goals,
             "off_policy_corrections": args.off_policy_corrections,
             "hindsight": args.hindsight,
@@ -516,52 +514,6 @@ def create_feedforward_parser(parser):
         nargs="+",
         help="specifies the convolutional strides per layer")
 
-    parser.add_argument(
-        "--ignore_flat_channels",
-        type=int,
-        nargs="+",
-        help="specifies which channels of the observation to ignore")
-    parser.add_argument(
-        "--includes_image",
-        action="store_true",
-        help="specifies whether the environment has an image  "
-             "in its observation space")
-    parser.add_argument(
-        "--ignore_image",
-        action="store_true",
-        help="specifies whether the image in the observation "
-             "should be ignored and removed")
-    parser.add_argument(
-        "--image_height",
-        type=int,
-        default=FEEDFORWARD_PARAMS["image_height"],
-        help="the height of the image observation")
-    parser.add_argument(
-        "--image_width",
-        type=int,
-        default=FEEDFORWARD_PARAMS["image_width"],
-        help="the width of the image observation")
-    parser.add_argument(
-        "--image_channels",
-        type=int,
-        default=FEEDFORWARD_PARAMS["image_channels"],
-        help="the number of channels of the image observation")
-    parser.add_argument(
-        "--filters",
-        type=int,
-        nargs="+",
-        help="specifies the convolutional filters per layer")
-    parser.add_argument(
-        "--kernel_sizes",
-        type=int,
-        nargs="+",
-        help="specifies the convolutional kernel sizes per layer")
-    parser.add_argument(
-        "--strides",
-        type=int,
-        nargs="+",
-        help="specifies the convolutional strides per layer")
-
     return parser
 
 
@@ -589,16 +541,6 @@ def create_goal_conditioned_parser(parser):
         type=float,
         default=GOAL_CONDITIONED_PARAMS["intrinsic_reward_scale"],
         help="the value that the intrinsic reward should be scaled by")
-    parser.add_argument(
-        "--pre_exp_reward_scale",
-        type=float,
-        default=GOAL_CONDITIONED_PARAMS["pre_exp_reward_scale"],
-        help="the value that the reward should be scaled by")
-    parser.add_argument(
-        "--pre_exp_reward_shift",
-        type=float,
-        default=GOAL_CONDITIONED_PARAMS["pre_exp_reward_shift"],
-        help="the value that the reward should be shifted by")
     parser.add_argument(
         "--relative_goals",
         action="store_true",
