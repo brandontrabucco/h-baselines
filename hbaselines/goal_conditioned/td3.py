@@ -9,15 +9,7 @@ from hbaselines.utils.tf_util import get_trainable_vars
 
 
 class GoalConditionedPolicy(BaseGoalConditionedPolicy):
-    """TD3-compatible goal-conditioned hierarchical policy.
-
-    TODO: description of off-policy corrections
-
-    TODO: description of connected gradients
-
-    Descriptions of the base goal-conditioned policy can be found in
-    hbaselines/goal_conditioned/base.py.
-    """
+    """TD3-compatible goal-conditioned hierarchical policy."""
 
     def __init__(self,
                  sess,
@@ -34,33 +26,27 @@ class GoalConditionedPolicy(BaseGoalConditionedPolicy):
                  noise,
                  target_policy_noise,
                  target_noise_clip,
-                 layer_norm,
-                 layers,
-                 act_fun,
                  use_huber,
-                 ignore_flat_channels,
-                 includes_image,
-                 ignore_image,
-                 image_height,
-                 image_width,
-                 image_channels,
-                 filters,
-                 kernel_sizes,
-                 strides,
-                 pre_exp_reward_scale,
-                 pre_exp_reward_shift,
+                 l2_penalty,
+                 model_params,
+                 num_levels,
                  meta_period,
+                 intrinsic_reward_type,
                  intrinsic_reward_scale,
                  relative_goals,
                  off_policy_corrections,
                  hindsight,
                  subgoal_testing_rate,
-                 connected_gradients,
+                 cooperative_gradients,
                  cg_weights,
-                 use_fingerprints,
-                 fingerprint_range,
-                 centralized_value_functions,
-                 env_name=""):
+                 cg_delta,
+                 pretrain_worker,
+                 pretrain_path,
+                 pretrain_ckpt,
+                 total_steps,
+                 scope=None,
+                 env_name="",
+                 num_envs=1):
         """Instantiate the goal-conditioned hierarchical policy.
 
         Parameters
@@ -97,34 +83,22 @@ class GoalConditionedPolicy(BaseGoalConditionedPolicy):
             actor policy. See TD3 paper for more.
         target_noise_clip : float
             clipping term for the noise injected in the target actor policy
-        layer_norm : bool
-            enable layer normalisation
-        layers : list of int or None
-            the size of the neural network for the policy
-        act_fun : tf.nn.*
-            the activation function to use in the neural network
         use_huber : bool
             specifies whether to use the huber distance function as the loss
             for the critic. If set to False, the mean-squared error metric is
             used instead
-        includes_image: bool
-            observation includes an image appended to it
-        ignore_image: bool
-            observation includes an image but should it be ignored
-        image_height: int
-            the height of the image in the observation
-        image_width: int
-            the width of the image in the observation
-        image_channels: int
-            the number of channels of the image in the observation
-        filters: list of int
-            the channels of the neural network conv layers for the policy
-        kernel_sizes: list of int
-            the kernel size of the neural network conv layers for the policy
-        strides: list of int
-            the kernel size of the neural network conv layers for the policy
+        l2_penalty : float
+            L2 regularization penalty. This is applied to the policy network.
+        model_params : dict
+            dictionary of model-specific parameters. See parent class.
+        num_levels : int
+            number of levels within the hierarchy. Must be greater than 1. Two
+            levels correspond to a Manager/Worker paradigm.
         meta_period : int
-            manger action period
+            meta-policy action period
+        intrinsic_reward_type : str
+            the reward function to be used by the lower-level policies. See the
+            base goal-conditioned policy for a description.
         intrinsic_reward_scale : float
             the value that the intrinsic reward should be scaled by
         relative_goals : bool
@@ -140,21 +114,29 @@ class GoalConditionedPolicy(BaseGoalConditionedPolicy):
         subgoal_testing_rate : float
             rate at which the original (non-hindsight) sample is stored in the
             replay buffer as well. Used only if `hindsight` is set to True.
-        connected_gradients : bool
-            whether to use the connected gradient update actor update procedure
-            to the higher-level policy. See: https://arxiv.org/abs/1912.02368v1
+        cooperative_gradients : bool
+            whether to use the cooperative gradient update procedure for the
+            higher-level policy. See: https://arxiv.org/abs/1912.02368v1
         cg_weights : float
             weights for the gradients of the loss of the lower-level policies
             with respect to the parameters of the higher-level policies. Only
-            used if `connected_gradients` is set to True.
-        use_fingerprints : bool
-            specifies whether to add a time-dependent fingerprint to the
-            observations
-        fingerprint_range : (list of float, list of float)
-            the low and high values for each fingerprint element, if they are
-            being used
-        centralized_value_functions : bool
-            specifies whether to use centralized value functions
+            used if `cooperative_gradients` is set to True.
+        cg_delta : float
+            the desired lower-level expected returns. If set to None, a fixed
+            Lagrangian specified by cg_weights is used instead. Only used if
+            `cooperative_gradients` is set to True.
+        pretrain_worker : bool
+            specifies whether you are pre-training the lower-level policies.
+            Actions by the high-level policy are randomly sampled from its
+            action space.
+        pretrain_path : str or None
+            path to the pre-trained worker policy checkpoints
+        pretrain_ckpt : int or None
+            checkpoint number to use within the worker policy path. If set to
+            None, the most recent checkpoint is used.
+        total_steps : int
+            Total number of timesteps used during training. Used by a subset of
+            algorithms.
         """
         super(GoalConditionedPolicy, self).__init__(
             sess=sess,
@@ -168,33 +150,27 @@ class GoalConditionedPolicy(BaseGoalConditionedPolicy):
             verbose=verbose,
             tau=tau,
             gamma=gamma,
-            layer_norm=layer_norm,
-            layers=layers,
-            act_fun=act_fun,
             use_huber=use_huber,
-            ignore_flat_channels=ignore_flat_channels,
-            includes_image=includes_image,
-            ignore_image=ignore_image,
-            image_height=image_height,
-            image_width=image_width,
-            image_channels=image_channels,
-            filters=filters,
-            kernel_sizes=kernel_sizes,
-            strides=strides,
-            pre_exp_reward_scale=pre_exp_reward_scale,
-            pre_exp_reward_shift=pre_exp_reward_shift,
+            l2_penalty=l2_penalty,
+            model_params=model_params,
+            num_levels=num_levels,
             meta_period=meta_period,
+            intrinsic_reward_type=intrinsic_reward_type,
             intrinsic_reward_scale=intrinsic_reward_scale,
             relative_goals=relative_goals,
             off_policy_corrections=off_policy_corrections,
             hindsight=hindsight,
             subgoal_testing_rate=subgoal_testing_rate,
-            connected_gradients=connected_gradients,
+            cooperative_gradients=cooperative_gradients,
             cg_weights=cg_weights,
-            use_fingerprints=use_fingerprints,
-            fingerprint_range=fingerprint_range,
-            centralized_value_functions=centralized_value_functions,
+            cg_delta=cg_delta,
+            scope=scope,
             env_name=env_name,
+            pretrain_worker=pretrain_worker,
+            pretrain_path=pretrain_path,
+            pretrain_ckpt=pretrain_ckpt,
+            total_steps=total_steps,
+            num_envs=num_envs,
             meta_policy=FeedForwardPolicy,
             worker_policy=FeedForwardPolicy,
             additional_params=dict(
@@ -208,6 +184,7 @@ class GoalConditionedPolicy(BaseGoalConditionedPolicy):
     #                       Auxiliary methods for HIRO                        #
     # ======================================================================= #
 
+    # TODO: add support for multi-level hierarchies
     def _log_probs(self, meta_actions, worker_obses, worker_actions):
         """Calculate the log probability of the next goal by the meta-policies.
 
@@ -307,63 +284,127 @@ class GoalConditionedPolicy(BaseGoalConditionedPolicy):
         return np.array(fitness)
 
     # ======================================================================= #
-    #                      Auxiliary methods for HRL-CG                       #
+    #                       Auxiliary methods for CHER                        #
     # ======================================================================= #
 
-    def _setup_connected_gradients(self):
-        """Create the connected gradients meta-policy optimizer."""
-        # Index relevant variables based on self.goal_indices
-        meta_obs0 = self.crop_to_goal(self.policy[0].obs_ph)
-        meta_obs1 = self.crop_to_goal(self.policy[0].obs1_ph)
-        worker_obs0 = self.crop_to_goal(self.policy[-1].obs_ph)
-        worker_obs1 = self.crop_to_goal(self.policy[-1].obs1_ph)
+    def _setup_cooperative_gradients(self):
+        """Create the cooperative gradients meta-policy optimizer."""
+        self._n_train_steps = 0
 
-        if self.relative_goals:
-            # Relative goal formulation as per HIRO.
-            goal = meta_obs0 + self.policy[0].actor_tf - meta_obs1
+        if self.cg_delta is not None:
+            # placeholder for the lambda term.
+            self.cg_weights = [
+                tf.compat.v1.Variable(initial_value=-4.20, trainable=True)
+                for _ in range(self.num_levels - 1)]
         else:
-            # Goal is the direct output from the meta policy in this case.
-            goal = self.policy[0].actor_tf
+            self.cg_weights = [
+                self.cg_weights for _ in range(self.num_levels - 1)]
 
-        # concatenate the output from the manager with the worker policy.
-        obs_shape = self.policy[-1].ob_space.shape[0]
-        obs = tf.concat([self.policy[-1].obs_ph[:, :obs_shape], goal], axis=-1)
+        self.cg_loss = []
+        self.cg_optimizer = []
+        for level in range(self.num_levels - 1):
+            # Index relevant variables based on self.goal_indices
+            meta_obs0 = self.crop_to_goal(self.policy[level].obs_ph)
+            meta_obs1 = self.crop_to_goal(self.policy[level].obs1_ph)
+            worker_obs0 = self.crop_to_goal(self.policy[level + 1].obs_ph)
+            worker_obs1 = self.crop_to_goal(self.policy[level + 1].obs1_ph)
 
-        # create the worker policy with inputs directly from the manager
-        with tf.compat.v1.variable_scope("level_1/model"):
-            worker_with_meta_obs = self.policy[-1].make_critic(
-                obs, self.policy[-1].action_ph, reuse=True, scope="qf_0")
+            if self.relative_goals:
+                # Relative goal formulation as per HIRO.
+                goal = meta_obs0 + self.policy[level].actor_tf - meta_obs1
+            else:
+                # Goal is the direct output from the meta policy in this case.
+                goal = self.policy[level].actor_tf
 
-        # create a tensorflow operation that mimics the reward function that is
-        # used to provide feedback to the worker
-        if self.relative_goals:
-            reward_fn = -tf.compat.v1.losses.mean_squared_error(
-                worker_obs0 + goal, worker_obs1)
-        else:
-            reward_fn = -tf.compat.v1.losses.mean_squared_error(
-                goal, worker_obs1)
+            # Concatenate the output from the manager with the worker policy.
+            obs_shape = self.policy[level + 1].ob_space.shape[0]
+            obs = tf.concat(
+                [self.policy[level + 1].obs_ph[:, :obs_shape], goal], axis=-1)
 
-        # compute the worker loss with respect to the meta policy actions
-        self.cg_loss = - tf.reduce_mean(worker_with_meta_obs) - reward_fn
+            # Create the worker policy with inputs directly from the manager.
+            with tf.compat.v1.variable_scope("level_{}/model".format(level+1)):
+                worker_with_meta_obs = self.policy[level + 1].make_critic(
+                    obs,
+                    self.policy[level + 1].action_ph,
+                    reuse=True, scope="qf_0")
 
-        # create the optimizer object
-        optimizer = tf.compat.v1.train.AdamOptimizer(self.policy[0].actor_lr)
-        self.cg_optimizer = optimizer.minimize(
-            self.policy[0].actor_loss + self.cg_weights * self.cg_loss,
-            var_list=get_trainable_vars("level_0/model/pi/"),
-        )
+            # Create a tensorflow operation that mimics the reward function
+            # that is used to provide feedback to the worker.
+            if self.intrinsic_reward_type.startswith("scaled"):
+                # Scale the observations/goals by the action space of the
+                # upper-level policy if requested.
+                ac_space = self.policy[level].ac_space
+                scale = 0.5 * (ac_space.high - ac_space.low)
+                worker_obs0 /= scale
+                goal /= scale
+                worker_obs1 /= scale
 
-    def _connected_gradients_update(self,
-                                    obs0,
-                                    actions,
-                                    rewards,
-                                    obs1,
-                                    terminals1,
-                                    worker_obs0,
-                                    worker_obs1,
-                                    worker_actions,
-                                    update_actor=True):
-        """Perform the gradient update procedure for the HRL-CG algorithm.
+            if self.relative_goals:
+                # Implement relative goals if requested.
+                goal += worker_obs0
+
+            if self.intrinsic_reward_type.endswith("exp_negative_distance"):
+                reward_fn = tf.reduce_mean(tf.exp(-tf.reduce_sum(
+                    tf.square(worker_obs0 + goal - worker_obs1), axis=1)))
+            elif self.intrinsic_reward_type.endswith("negative_distance"):
+                reward_fn = -tf.compat.v1.losses.mean_squared_error(
+                    worker_obs0 + goal, worker_obs1)
+            else:
+                raise ValueError("Unknown intrinsic reward type: {}".format(
+                    self.intrinsic_reward_type))
+
+            # Scale by the worker reward scale.
+            reward_fn *= self.intrinsic_reward_scale
+
+            # Compute the worker loss with respect to the meta policy actions.
+            cg_loss = - (tf.reduce_mean(worker_with_meta_obs) + reward_fn)
+            self.cg_loss.append(cg_loss)
+
+            # Create the optimizer object.
+            optimizer = tf.compat.v1.train.AdamOptimizer(
+                self.policy[level].actor_lr)
+            self.cg_optimizer.append(optimizer.minimize(
+                self.policy[level].actor_loss
+                + tf.exp(self.cg_weights[level]) * cg_loss,
+                var_list=get_trainable_vars(
+                    "level_{}/model/pi/".format(level)),
+            ))
+
+            if self.cg_delta is not None:
+                cg_weights_loss = \
+                    tf.reduce_mean(
+                        tf.exp(self.cg_weights[level]) * tf.stop_gradient(
+                            worker_with_meta_obs + reward_fn - self.cg_delta
+                        )
+                    )
+                optimizer = tf.compat.v1.train.AdamOptimizer(self.actor_lr)
+                self.cg_weights_optimizer = optimizer.minimize(
+                    cg_weights_loss,
+                    var_list=[self.cg_weights[level]])
+
+                # Add to tensorboard.
+                tf.compat.v1.summary.scalar(
+                    "level_{}/cg_weights_log".format(level),
+                    self.cg_weights[level])
+                tf.compat.v1.summary.scalar(
+                    "level_{}/cg_weights".format(level),
+                    tf.exp(self.cg_weights[level]))
+                tf.compat.v1.summary.scalar(
+                    "level_{}/cg_weights_loss".format(level),
+                    cg_weights_loss)
+                tf.compat.v1.summary.scalar(
+                    "level_{}/worker_with_meta_obs".format(level),
+                    tf.reduce_mean(worker_with_meta_obs))
+
+    def _cooperative_gradients_update(self,
+                                      obs0,
+                                      actions,
+                                      rewards,
+                                      obs1,
+                                      terminals1,
+                                      level_num,
+                                      update_actor=True):
+        """Perform the gradient update procedure for the CHER algorithm.
 
         This procedure is similar to update_from_batch, expect it runs the
         self.cg_optimizer operation instead of the policy object's optimizer,
@@ -371,67 +412,63 @@ class GoalConditionedPolicy(BaseGoalConditionedPolicy):
 
         Parameters
         ----------
-        obs0 : array_like
-            batch of manager observations
-        actions : array_like
-            batch of manager actions executed given obs_batch
-        rewards : array_like
-            manager rewards received as results of executing act_batch
-        obs1 : array_like
-            set of next manager observations seen after executing act_batch
-        terminals1 : numpy bool
-            done_mask[i] = 1 if executing act_batch[i] resulted in the end of
-            an episode and 0 otherwise.
-        worker_obs0 : array_like
-            batch of worker observations
-        worker_obs1 : array_like
-            batch of next worker observations
-        worker_actions : array_like
-            batch of worker actions
+        obs0 : list of array_like
+            (batch_size, obs_dim) matrix of observations for every level in the
+            hierarchy
+        actions : list of array_like
+            (batch_size, ac_dim) matrix of actions for every level in the
+            hierarchy
+        obs1 : list of array_like
+            (batch_size, obs_dim) matrix of next step observations for every
+            level in the hierarchy
+        rewards : list of array_like
+            (batch_size,) vector of rewards for every level in the hierarchy
+        terminals1 : list of numpy bool
+            (batch_size,) vector of done masks for every level in the hierarchy
+        level_num : int
+            the hierarchy level number of the policy to optimize
         update_actor : bool
-            specifies whether to update the actor policy of the manager. The
-            critic policy is still updated if this value is set to False.
-
-        Returns
-        -------
-        [float, float]
-            meta-policy critic loss
-        float
-            meta-policy actor loss
+            specifies whether to update the actor policy of the meta policy.
+            The critic policy is still updated if this value is set to False.
         """
+        self._n_train_steps += 1
+
         # Reshape to match previous behavior and placeholder shape.
-        rewards = rewards.reshape(-1, 1)
-        terminals1 = terminals1.reshape(-1, 1)
+        rewards[level_num] = rewards[level_num].reshape(-1, 1)
+        terminals1[level_num] = terminals1[level_num].reshape(-1, 1)
 
         # Update operations for the critic networks.
-        step_ops = [self.policy[0].critic_loss,
-                    self.policy[0].critic_optimizer[0],
-                    self.policy[0].critic_optimizer[1]]
+        step_ops = [
+            self.policy[level_num].critic_optimizer[0],
+            self.policy[level_num].critic_optimizer[1],
+        ]
 
         feed_dict = {
-            self.policy[0].obs_ph: obs0,
-            self.policy[0].action_ph: actions,
-            self.policy[0].rew_ph: rewards,
-            self.policy[0].obs1_ph: obs1,
-            self.policy[0].terminals1: terminals1
+            self.policy[level_num].obs_ph: obs0[level_num],
+            self.policy[level_num].action_ph: actions[level_num],
+            self.policy[level_num].rew_ph: rewards[level_num],
+            self.policy[level_num].obs1_ph: obs1[level_num],
+            self.policy[level_num].terminals1: terminals1[level_num],
+            self.policy[level_num + 1].action_ph: actions[level_num + 1],
+            self.policy[level_num + 1].obs_ph: obs0[level_num + 1],
         }
+
+        # Update the cg_weights terms.
+        if self._n_train_steps > 1000 and self.cg_delta is not None:
+            step_ops += [self.cg_weights_optimizer]
 
         if update_actor:
             # Actor updates and target soft update operation.
-            step_ops += [self.policy[0].actor_loss,
-                         self.cg_optimizer,  # This is what's replaced.
-                         self.policy[0].target_soft_updates]
+            step_ops += [
+                self.cg_optimizer[level_num],  # This is what's replaced.
+                self.policy[level_num].target_soft_updates,
+            ]
 
             feed_dict.update({
-                self.policy[-1].obs_ph: worker_obs0,
-                self.policy[-1].action_ph: worker_actions,
-                self.policy[-1].obs1_ph: worker_obs1,
+                self.policy[level_num + 1].obs_ph: obs0[level_num + 1],
+                self.policy[level_num + 1].action_ph: actions[level_num + 1],
+                self.policy[level_num + 1].obs1_ph: obs1[level_num + 1],
             })
 
-        # Perform the update operations and collect the critic loss.
-        critic_loss, *_vals = self.sess.run(step_ops, feed_dict=feed_dict)
-
-        # Extract the actor loss.
-        actor_loss = _vals[2] if update_actor else 0
-
-        return critic_loss, actor_loss
+        # Perform the update operations.
+        self.sess.run(step_ops, feed_dict=feed_dict)

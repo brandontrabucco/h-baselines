@@ -2,8 +2,10 @@
 import tensorflow as tf
 import numpy as np
 
-from hbaselines.fcnet.base import ActorCriticPolicy
+from hbaselines.base_policies import ActorCriticPolicy
 from hbaselines.fcnet.replay_buffer import ReplayBuffer
+from hbaselines.utils.tf_util import create_fcnet
+from hbaselines.utils.tf_util import create_conv
 from hbaselines.utils.tf_util import get_trainable_vars
 from hbaselines.utils.tf_util import reduce_std
 from hbaselines.utils.tf_util import gaussian_likelihood
@@ -17,7 +19,7 @@ LOG_STD_MIN = -20
 
 
 class FeedForwardPolicy(ActorCriticPolicy):
-    """Feed-forward neural network actor-critic policy.
+    """SAC-compatible feedforward policy.
 
     Attributes
     ----------
@@ -39,45 +41,18 @@ class FeedForwardPolicy(ActorCriticPolicy):
         critic learning rate
     verbose : int
         the verbosity level: 0 none, 1 training information, 2 tensorflow debug
-    layers : list of int
-        the size of the Neural network for the policy
     tau : float
         target update rate
     gamma : float
         discount factor
-    layer_norm : bool
-        enable layer normalisation
-    act_fun : tf.nn.*
-        the activation function to use in the neural network
     use_huber : bool
         specifies whether to use the huber distance function as the loss for
         the critic. If set to False, the mean-squared error metric is used
         instead
-    includes_image: bool
-        observation includes an image appended to it
-    ignore_image: bool
-        observation includes an image but should it be ignored
-    image_height: int
-        the height of the image in the observation
-    image_width: int
-        the width of the image in the observation
-    image_channels: int
-        the number of channels of the image in the observation
-    filters: list of int
-        the channels of the neural network conv layers for the policy
-    kernel_sizes: list of int
-        the kernel size of the neural network conv layers for the policy
-    strides: list of int
-        the kernel size of the neural network conv layers for the policy
+    model_params : dict
+        dictionary of model-specific parameters. See parent class.
     target_entropy : float
         target entropy used when learning the entropy coefficient
-    zero_fingerprint : bool
-        whether to zero the last two elements of the observations for the actor
-        and critic computations. Used for the worker policy when fingerprints
-        are being implemented.
-    fingerprint_dim : bool
-        the number of fingerprint elements in the observation. Used when trying
-        to zero the fingerprint elements.
     replay_buffer : hbaselines.fcnet.replay_buffer.ReplayBuffer
         the replay buffer
     terminals1 : tf.compat.v1.placeholder
@@ -150,23 +125,12 @@ class FeedForwardPolicy(ActorCriticPolicy):
                  verbose,
                  tau,
                  gamma,
-                 layer_norm,
-                 layers,
-                 act_fun,
                  use_huber,
-                 ignore_flat_channels,
-                 includes_image,
-                 ignore_image,
-                 image_height,
-                 image_width,
-                 image_channels,
-                 filters,
-                 kernel_sizes,
-                 strides,
+                 l2_penalty,
+                 model_params,
                  target_entropy,
                  scope=None,
-                 zero_fingerprint=False,
-                 fingerprint_dim=2):
+                 num_envs=1):
         """Instantiate the feed-forward neural network policy.
 
         Parameters
@@ -194,44 +158,19 @@ class FeedForwardPolicy(ActorCriticPolicy):
             target update rate
         gamma : float
             discount factor
-        layer_norm : bool
-            enable layer normalisation
-        layers : list of int or None
-            the size of the Neural network for the policy
-        act_fun : tf.nn.*
-            the activation function to use in the neural network
         use_huber : bool
             specifies whether to use the huber distance function as the loss
             for the critic. If set to False, the mean-squared error metric is
             used instead
-        includes_image: bool
-            observation includes an image appended to it
-        ignore_image: bool
-            observation includes an image but should it be ignored
-        image_height: int
-            the height of the image in the observation
-        image_width: int
-            the width of the image in the observation
-        image_channels: int
-            the number of channels of the image in the observation
-        kernel_sizes: list of int
-            the kernel size of the neural network conv layers for the policy
-        strides: list of int
-            the kernel size of the neural network conv layers for the policy
-        filters: list of int
-            the channels of the neural network conv layers for the policy
+        l2_penalty : float
+            L2 regularization penalty. This is applied to the policy network.
+        model_params : dict
+            dictionary of model-specific parameters. See parent class.
         target_entropy : float
             target entropy used when learning the entropy coefficient. If set
             to None, a heuristic value is used.
         scope : str
             an upper-level scope term. Used by policies that call this one.
-        zero_fingerprint : bool
-            whether to zero the last two elements of the observations for the
-            actor and critic computations. Used for the worker policy when
-            fingerprints are being implemented.
-        fingerprint_dim : bool
-            the number of fingerprint elements in the observation. Used when
-            trying to zero the fingerprint elements.
         """
         super(FeedForwardPolicy, self).__init__(
             sess=sess,
@@ -245,19 +184,10 @@ class FeedForwardPolicy(ActorCriticPolicy):
             verbose=verbose,
             tau=tau,
             gamma=gamma,
-            layer_norm=layer_norm,
-            layers=layers,
-            act_fun=act_fun,
             use_huber=use_huber,
-            ignore_flat_channels=ignore_flat_channels,
-            includes_image=includes_image,
-            ignore_image=ignore_image,
-            image_height=image_height,
-            image_width=image_width,
-            image_channels=image_channels,
-            filters=filters,
-            kernel_sizes=kernel_sizes,
-            strides=strides,
+            l2_penalty=l2_penalty,
+            model_params=model_params,
+            num_envs=num_envs,
         )
         
         print(use_huber, includes_image, ignore_image, image_height)
@@ -268,8 +198,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
         else:
             self.target_entropy = target_entropy
 
-        self.zero_fingerprint = zero_fingerprint
-        self.fingerprint_dim = fingerprint_dim
         self._ac_means = 0.5 * (ac_space.high + ac_space.low)
         self._ac_magnitudes = 0.5 * (ac_space.high - ac_space.low)
 
@@ -314,10 +242,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
                 shape=(None,) + ob_dim,
                 name='obs1')
 
-        # logging of rewards to tensorboard
-        with tf.compat.v1.variable_scope("input_info", reuse=False):
-            tf.compat.v1.summary.scalar('rewards', tf.reduce_mean(self.rew_ph))
-
         # =================================================================== #
         # Step 3: Create actor and critic variables.                          #
         # =================================================================== #
@@ -361,11 +285,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
         with tf.compat.v1.variable_scope("Optimizer", reuse=False):
             self._setup_actor_optimizer(scope)
             self._setup_critic_optimizer(scope)
-            tf.compat.v1.summary.scalar('alpha_loss', self.alpha_loss)
-            tf.compat.v1.summary.scalar('actor_loss', self.actor_loss)
-            tf.compat.v1.summary.scalar('Q1_loss', self.critic_loss[0])
-            tf.compat.v1.summary.scalar('Q2_loss', self.critic_loss[1])
-            tf.compat.v1.summary.scalar('value_loss', self.critic_loss[2])
 
         # =================================================================== #
         # Step 5: Setup the operations for computing model statistics.        #
@@ -401,88 +320,37 @@ class FeedForwardPolicy(ActorCriticPolicy):
         tf.Variable
             the log-probability of a given observation given a fixed action
         """
-        with tf.compat.v1.variable_scope(scope, reuse=reuse):
+        # Initial image pre-processing (for convolutional policies).
+        if self.model_params["model_type"] == "conv":
+            pi_h = create_conv(
+                obs=obs,
+                image_height=self.model_params["image_height"],
+                image_width=self.model_params["image_width"],
+                image_channels=self.model_params["image_channels"],
+                ignore_flat_channels=self.model_params["ignore_flat_channels"],
+                ignore_image=self.model_params["ignore_image"],
+                filters=self.model_params["filters"],
+                kernel_sizes=self.model_params["kernel_sizes"],
+                strides=self.model_params["strides"],
+                act_fun=self.model_params["act_fun"],
+                layer_norm=self.model_params["layer_norm"],
+                scope=scope,
+                reuse=reuse,
+            )
+        else:
             pi_h = obs
 
-            # zero out the fingerprint observations for the worker policy
-            if self.zero_fingerprint:
-                pi_h = self._remove_fingerprint(
-                    pi_h,
-                    self.ob_space.shape[0],
-                    self.fingerprint_dim,
-                    self.co_space.shape[0]
-                )
-                
-            # if an image is present in the observation
-            # extra processing steps are needed
-            if self.includes_image:
-                
-                batch_size = tf.shape(pi_h)[0]
-                image_size = (self.image_height * 
-                              self.image_width * 
-                              self.image_channels)
-                
-                original_pi_h = pi_h
-                pi_h = original_pi_h[:, image_size:]
-
-                pi_h = tf.gather(pi_h, [i for i in range(
-                    pi_h.shape[1]) if i not in self.ignore_flat_channels], axis=1)
-                    
-                # ignoring the image is useful for the lower level policy
-                # for creating an abstraction barrier
-                if not self.ignore_image:
-                    
-                    pi_h_image = tf.reshape(
-                        original_pi_h[:, :image_size],
-                        [batch_size, self.image_height, self.image_width,
-                         self.image_channels]
-                    )
-                
-                    # create the hidden convolutional layers
-                    for i, (filters, 
-                            kernel_size, 
-                            strides) in enumerate(zip(self.filters, 
-                                                      self.kernel_sizes, 
-                                                      self.strides)):
-                    
-                        pi_h_image = self._conv_layer(
-                            pi_h_image, filters, kernel_size, strides, 
-                            'conv{}'.format(i),
-                            act_fun=self.act_fun,
-                            layer_norm=self.layer_norm
-                        )
-                        
-                    h = pi_h_image.shape[1]
-                    w = pi_h_image.shape[2]
-                    c = pi_h_image.shape[3]
-                    pi_h = tf.concat(
-                        [tf.reshape(pi_h_image, [
-                            batch_size, h * w * c]) / tf.cast(h * w * c,
-                                                              tf.float32),
-                         pi_h], 1
-                    )
-
-            # create the hidden layers
-            for i, layer_size in enumerate(self.layers):
-                pi_h = self._layer(
-                    pi_h,  layer_size, 'fc{}'.format(i),
-                    act_fun=self.act_fun,
-                    layer_norm=self.layer_norm
-                )
-
-            # create the output mean
-            policy_mean = self._layer(
-                pi_h, self.ac_space.shape[0], 'mean',
-                act_fun=None,
-                kernel_initializer=tf.random_uniform_initializer(
-                    minval=-3e-3, maxval=3e-3)
-            )
-
-            # create the output log_std
-            log_std = self._layer(
-                pi_h, self.ac_space.shape[0], 'log_std',
-                act_fun=None,
-            )
+        # Create the model.
+        policy_mean, log_std = create_fcnet(
+            obs=pi_h,
+            layers=self.model_params["layers"],
+            num_output=self.ac_space.shape[0],
+            stochastic=True,
+            act_fun=self.model_params["act_fun"],
+            layer_norm=self.model_params["layer_norm"],
+            scope=scope,
+            reuse=reuse,
+        )
 
         # OpenAI Variation to cap the standard deviation
         log_std = tf.clip_by_value(log_std, LOG_STD_MIN, LOG_STD_MAX)
@@ -538,19 +406,35 @@ class FeedForwardPolicy(ActorCriticPolicy):
             the output from the value function. Set to None if `create_vf` is
             False.
         """
-        with tf.compat.v1.variable_scope(scope, reuse=reuse):
-            # zero out the fingerprint observations for the worker policy
-            if self.zero_fingerprint:
-                obs = self._remove_fingerprint(
-                    obs,
-                    self.ob_space.shape[0],
-                    self.fingerprint_dim,
-                    self.co_space.shape[0]
-                )
+        conv_params = dict(
+            image_height=self.model_params["image_height"],
+            image_width=self.model_params["image_width"],
+            image_channels=self.model_params["image_channels"],
+            ignore_flat_channels=self.model_params["ignore_flat_channels"],
+            ignore_image=self.model_params["ignore_image"],
+            filters=self.model_params["filters"],
+            kernel_sizes=self.model_params["kernel_sizes"],
+            strides=self.model_params["strides"],
+            act_fun=self.model_params["act_fun"],
+            layer_norm=self.model_params["layer_norm"],
+            reuse=reuse,
+        )
 
+        fcnet_params = dict(
+            layers=self.model_params["layers"],
+            num_output=1,
+            stochastic=False,
+            act_fun=self.model_params["act_fun"],
+            layer_norm=self.model_params["layer_norm"],
+            reuse=reuse,
+        )
+
+        with tf.compat.v1.variable_scope(scope, reuse=reuse):
             # Value function
             if create_vf:
-                with tf.compat.v1.variable_scope("vf", reuse=reuse):
+                if self.model_params["model_type"] == "conv":
+                    vf_h = create_conv(obs=obs, scope="vf", **conv_params)
+                else:
                     vf_h = obs
                 
                     # if an image is present in the observation
@@ -608,190 +492,37 @@ class FeedForwardPolicy(ActorCriticPolicy):
                                  vf_h], 1
                             )
 
-                    # create the hidden layers
-                    for i, layer_size in enumerate(self.layers):
-                        vf_h = self._layer(
-                            vf_h, layer_size, 'fc{}'.format(i),
-                            act_fun=self.act_fun,
-                            layer_norm=self.layer_norm
-                        )
-
-                    # create the output layer
-                    value_fn = self._layer(
-                        vf_h, 1, 'vf_output',
-                        kernel_initializer=tf.random_uniform_initializer(
-                            minval=-3e-3, maxval=3e-3)
-                    )
+                value_fn = create_fcnet(
+                    obs=vf_h, scope="vf", output_pre="vf_", **fcnet_params)
             else:
                 value_fn = None
 
             # Double Q values to reduce overestimation
             if create_qf:
-                with tf.compat.v1.variable_scope('qf1', reuse=reuse):
-                    # concatenate the observations and actions
-                    qf1_h = tf.concat([obs, action], axis=-1)
-                
-                    # if an image is present in the observation
-                    # extra processing steps are needed
-                    if self.includes_image:
+                # Concatenate the observations and actions.
+                qf_h = tf.concat([obs, action], axis=-1)
 
-                        batch_size = tf.shape(qf1_h)[0]
-                        image_size = (self.image_height * 
-                                      self.image_width * 
-                                      self.image_channels)
+                if self.model_params["model_type"] == "conv":
+                    qf1_h = create_conv(obs=qf_h, scope="qf1", **conv_params)
+                    qf2_h = create_conv(obs=qf_h, scope="qf2", **conv_params)
+                else:
+                    qf1_h = qf_h
+                    qf2_h = qf_h
 
-                        original_qf1_h = qf1_h
-                        qf1_h = original_qf1_h[:, image_size:]
-
-                        qf1_h = tf.gather(
-                            qf1_h, [i for i in range(qf1_h.shape[1])
-                                    if i not in self.ignore_flat_channels],
-                            axis=1)
-
-                        # ignoring the image is useful for the lower level
-                        # for creating an abstraction barrier
-                        if not self.ignore_image:
-
-                            qf1_h_image = tf.reshape(
-                                original_qf1_h[:, :image_size],
-                                [batch_size, self.image_height,
-                                 self.image_width, self.image_channels]
-                            )
-
-                            # create the hidden convolutional layers
-                            for i, (filters, 
-                                    kernel_size, 
-                                    strides) in enumerate(zip(
-                                        self.filters,
-                                        self.kernel_sizes,
-                                        self.strides)):
-
-                                qf1_h_image = self._conv_layer(
-                                    qf1_h_image,
-                                    filters,
-                                    kernel_size,
-                                    strides,
-                                    'conv{}'.format(i),
-                                    act_fun=self.act_fun,
-                                    layer_norm=self.layer_norm
-                                )
-                        
-                            h = qf1_h_image.shape[1]
-                            w = qf1_h_image.shape[2]
-                            c = qf1_h_image.shape[3]
-                            qf1_h = tf.concat(
-                                [tf.reshape(qf1_h_image, [
-                                    batch_size, h * w * c]) / tf.cast(
-                                    h * w * c, tf.float32),
-                                 qf1_h], 1
-                            )
-
-                    # create the hidden layers
-                    for i, layer_size in enumerate(self.layers):
-                        qf1_h = self._layer(
-                            qf1_h, layer_size, 'fc{}'.format(i),
-                            act_fun=self.act_fun,
-                            layer_norm=self.layer_norm
-                        )
-
-                    # create the output layer
-                    qf1 = self._layer(
-                        qf1_h, 1, 'qf_output',
-                        kernel_initializer=tf.random_uniform_initializer(
-                            minval=-3e-3, maxval=3e-3)
-                    )
-
-                with tf.compat.v1.variable_scope('qf2', reuse=reuse):
-                    # concatenate the observations and actions
-                    qf2_h = tf.concat([obs, action], axis=-1)
-                
-                    # if an image is present in the observation
-                    # extra processing steps are needed
-                    if self.includes_image:
-
-                        batch_size = tf.shape(qf2_h)[0]
-                        image_size = (self.image_height * 
-                                      self.image_width * 
-                                      self.image_channels)
-
-                        original_qf2_h = qf2_h
-                        qf2_h = original_qf2_h[:, image_size:]
-
-                        qf2_h = tf.gather(
-                            qf2_h, [i for i in range(qf2_h.shape[1])
-                                    if i not in self.ignore_flat_channels],
-                            axis=1)
-
-                        # ignoring the image is useful for the lower level
-                        # for creating an abstraction barrier
-                        if not self.ignore_image:
-
-                            qf2_h_image = tf.reshape(
-                                original_qf2_h[:, :image_size],
-                                [batch_size, self.image_height,
-                                 self.image_width, self.image_channels]
-                            )
-
-                            # create the hidden convolutional layers
-                            for i, (filters, 
-                                    kernel_size, 
-                                    strides) in enumerate(zip(
-                                        self.filters,
-                                        self.kernel_sizes,
-                                        self.strides)):
-
-                                qf2_h_image = self._conv_layer(
-                                    qf2_h_image,
-                                    filters,
-                                    kernel_size,
-                                    strides,
-                                    'conv{}'.format(i),
-                                    act_fun=self.act_fun,
-                                    layer_norm=self.layer_norm
-                                )
-                        
-                            h = qf2_h_image.shape[1]
-                            w = qf2_h_image.shape[2]
-                            c = qf2_h_image.shape[3]
-                            qf2_h = tf.concat(
-                                [tf.reshape(qf2_h_image, [
-                                    batch_size, h * w * c]) / tf.cast(
-                                    h * w * c, tf.float32),
-                                 qf2_h], 1
-                            )
-
-                    # create the hidden layers
-                    for i, layer_size in enumerate(self.layers):
-                        qf2_h = self._layer(
-                            qf2_h, layer_size, 'fc{}'.format(i),
-                            act_fun=self.act_fun,
-                            layer_norm=self.layer_norm
-                        )
-
-                    # create the output layer
-                    qf2 = self._layer(
-                        qf2_h, 1, 'qf_output',
-                        kernel_initializer=tf.random_uniform_initializer(
-                            minval=-3e-3, maxval=3e-3)
-                    )
+                qf1 = create_fcnet(
+                    obs=qf1_h, scope="qf1", output_pre="qf_", **fcnet_params)
+                qf2 = create_fcnet(
+                    obs=qf2_h, scope="qf2", output_pre="qf_", **fcnet_params)
             else:
                 qf1, qf2 = None, None
 
         return qf1, qf2, value_fn
 
     def update(self, **kwargs):
-        """Perform a gradient update step.
-
-        Returns
-        -------
-        [float, float]
-            Q1 loss, Q2 loss
-        float
-            actor loss
-        """
+        """Perform a gradient update step."""
         # Not enough samples in the replay buffer.
         if not self.replay_buffer.can_sample():
-            return [0, 0], 0
+            return
 
         # Get a batch
         obs0, actions, rewards, obs1, done1 = self.replay_buffer.sample()
@@ -817,13 +548,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
             an episode and 0 otherwise.
         update_actor : bool
             whether to update the actor policy. Unused by this method.
-
-        Returns
-        -------
-        [float, float]
-            Q1 loss, Q2 loss
-        float
-            actor loss
         """
         del update_actor  # unused by this method
 
@@ -836,11 +560,6 @@ class FeedForwardPolicy(ActorCriticPolicy):
 
         # Collect all update and loss call operations.
         step_ops = [
-            self.critic_loss[0],
-            self.critic_loss[1],
-            self.critic_loss[2],
-            self.actor_loss,
-            self.alpha_loss,
             self.critic_optimizer,
             self.actor_optimizer,
             self.alpha_optimizer,
@@ -856,13 +575,10 @@ class FeedForwardPolicy(ActorCriticPolicy):
             self.terminals1: terminals1
         }
 
-        # Perform the update operations and collect the actor and critic loss.
-        q1_loss, q2_loss, vf_loss, actor_loss, *_ = self.sess.run(
-            step_ops, feed_dict)
+        # Perform the update operations.
+        self.sess.run(step_ops, feed_dict)
 
-        return [q1_loss, q2_loss], actor_loss  # FIXME: add vf_loss
-
-    def get_action(self, obs, context, apply_noise, random_actions):
+    def get_action(self, obs, context, apply_noise, random_actions, env_num=0):
         """See parent class."""
         # Add the contextual observation, if applicable.
         obs = self._get_obs(obs, context, axis=1)
@@ -966,6 +682,9 @@ class FeedForwardPolicy(ActorCriticPolicy):
         # Compute the policy loss
         self.actor_loss = tf.reduce_mean(self.alpha * self.logp_pi - min_qf_pi)
 
+        # Add a regularization penalty.
+        self.actor_loss += self._l2_loss(self.l2_penalty, scope_name)
+
         # Policy train op (has to be separate from value train op, because
         # min_qf_pi appears in policy_loss)
         actor_optimizer = tf.compat.v1.train.AdamOptimizer(self.actor_lr)
@@ -1003,15 +722,36 @@ class FeedForwardPolicy(ActorCriticPolicy):
         ops += [reduce_std(self.qf2_pi)]
         names += ['{}/reference_actor_Q2_std'.format(base)]
 
-        ops += [tf.reduce_mean(self.policy_out)]
+        ops += [tf.reduce_mean(
+            self._ac_magnitudes * self.policy_out + self._ac_means)]
         names += ['{}/reference_action_mean'.format(base)]
-        ops += [reduce_std(self.policy_out)]
+        ops += [reduce_std(
+            self._ac_magnitudes * self.policy_out + self._ac_means)]
         names += ['{}/reference_action_std'.format(base)]
 
         ops += [tf.reduce_mean(self.logp_pi)]
         names += ['{}/reference_log_probability_mean'.format(base)]
         ops += [reduce_std(self.logp_pi)]
         names += ['{}/reference_log_probability_std'.format(base)]
+
+        ops += [tf.reduce_mean(self.rew_ph)]
+        names += ['{}/rewards'.format(base)]
+
+        ops += [self.alpha_loss]
+        names += ['{}/alpha_loss'.format(base)]
+
+        ops += [self.actor_loss]
+        names += ['{}/actor_loss'.format(base)]
+
+        ops += [self.critic_loss[0]]
+        names += ['{}/Q1_loss'.format(base)]
+
+        ops += [self.critic_loss[1]]
+        names += ['{}/Q2_loss'.format(base)]
+        tf.compat.v1.summary.scalar('Q2_loss', self.critic_loss[1])
+
+        ops += [self.critic_loss[2]]
+        names += ['{}/value_loss'.format(base)]
 
         # Add all names and ops to the tensorboard summary.
         for op, name in zip(ops, names):
@@ -1024,7 +764,7 @@ class FeedForwardPolicy(ActorCriticPolicy):
         self.sess.run(self.target_init_updates)
 
     def store_transition(self, obs0, context0, action, reward, obs1, context1,
-                         done, is_final_step, evaluate=False):
+                         done, is_final_step, env_num=0, evaluate=False):
         """See parent class."""
         if not evaluate:
             # Add the contextual observation, if applicable.
