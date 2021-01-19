@@ -526,22 +526,22 @@ class AntMaze(UniversalAntMazeEnv):
                 states=states,
                 goals=goals,
                 next_states=next_states,
-                state_indices=[image_size*image_size*3 + 0,
-                               image_size*image_size*3 + 1],
+                state_indices=[0, 1],
                 relative_context=False,
                 offset=0.0,
                 reward_scales=REWARD_SCALE
             )
 
-        super(ImageAntMaze, self).__init__(
+        super(AntMaze, self).__init__(
             maze_id=maze_id,
             contextual_reward=contextual_reward,
             use_contexts=use_contexts,
             random_contexts=random_contexts,
             context_range=context_range,
             maze_size_scaling=8,
-            top_down_view=True,
-            image_size=image_size,
+            top_down_view=False,
+            evaluate=evaluate,
+            num_levels=num_levels,
         )
 
 

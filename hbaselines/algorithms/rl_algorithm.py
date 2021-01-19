@@ -484,7 +484,7 @@ class RLAlgorithm(object):
 
         # Create the environment and collect the initial observations.
         self.sampler, self.obs, self.all_obs, self._info_keys = \
-            self.setup_sampler(env, render, shared, maddpg)
+            self.setup_sampler(env, render, num_levels, shared, maddpg)
 
         # Collect the spaces of the environments.
         self.ac_space, self.ob_space, self.co_space, all_ob_space = \
@@ -546,7 +546,7 @@ class RLAlgorithm(object):
         if _init_setup_model:
             self.trainable_vars = self.setup_model()
 
-    def setup_sampler(self, env, render, shared, maddpg):
+    def setup_sampler(self, env, render, num_levels, shared, maddpg):
         """Create the environment and collect the initial observations.
 
         Parameters
@@ -555,6 +555,8 @@ class RLAlgorithm(object):
             the name of the environment
         render : bool
             whether to render the environment
+        num_levels : int
+            the number of hierarchy levels in the current agent.
         shared : bool
             specifies whether agents in an environment are meant to share
             policies. This is solely used by multi-agent Flow environments.
@@ -581,6 +583,7 @@ class RLAlgorithm(object):
                 RaySampler.remote(
                     env_name=env,
                     render=render,
+                    num_levels=num_levels,
                     shared=shared,
                     maddpg=maddpg,
                     env_num=env_num,
@@ -597,6 +600,7 @@ class RLAlgorithm(object):
                 Sampler(
                     env_name=env,
                     render=render,
+                    num_levels=num_levels,
                     shared=shared,
                     maddpg=maddpg,
                     env_num=0,
@@ -650,6 +654,7 @@ class RLAlgorithm(object):
             self.sess = make_session(num_cpu=3, graph=self.graph)
 
             # Create the policy.
+            print(self.policy)
             self.policy_tf = self.policy(
                 self.sess,
                 self.ob_space,

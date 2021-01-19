@@ -119,6 +119,8 @@ def get_hyperparameters(args, policy):
             "pretrain_worker": args.pretrain_worker,
             "pretrain_path": args.pretrain_path,
             "pretrain_ckpt": args.pretrain_ckpt,
+            "overfit": args.overfit,
+            "underfit": args.underfit,
         })
 
     # add MultiActorCriticPolicy parameters
@@ -600,6 +602,17 @@ def create_goal_conditioned_parser(parser):
         default=GOAL_CONDITIONED_PARAMS["pretrain_ckpt"],
         help="checkpoint number to use within the worker policy path. If set "
              "to None, the most recent checkpoint is used.")
+
+    parser.add_argument(
+        "--overfit",
+        action="store_true",
+        help="specifies whether the hierarchy should be trained to overfit to a "
+             "poorly trained lower level policy and generate spurracious goals")
+    parser.add_argument(
+        "--underfit",
+        action="store_true",
+        help="specifies whether the hierarchy should be trained to underfit to a "
+             "rapidly trained lower level policy and generate insufficient goals")
 
     return parser
 

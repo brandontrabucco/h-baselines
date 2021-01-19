@@ -15,7 +15,7 @@ class Sampler(object):
         the training / evaluation environment
     """
 
-    def __init__(self, env_name, render, shared, maddpg, evaluate, env_num):
+    def __init__(self, env_name, render, num_levels, shared, maddpg, evaluate, env_num):
         """Instantiate the sampler object.
 
         Parameters
@@ -24,6 +24,8 @@ class Sampler(object):
             the name of the environment
         render : bool
             whether to render the environment
+        num_levels : int
+            the number of hierarchy levels in the current agent.
         shared : bool
             specifies whether agents in an environment are meant to share
             policies. This is solely used by multi-agent Flow environments.
@@ -39,6 +41,7 @@ class Sampler(object):
         self.env, self._init_obs = create_env(
             env=env_name,
             render=render,
+            num_levels=num_levels,
             shared=shared,
             maddpg=maddpg,
             evaluate=evaluate,

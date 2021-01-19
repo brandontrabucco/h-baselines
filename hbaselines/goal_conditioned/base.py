@@ -148,6 +148,8 @@ class GoalConditionedPolicy(ActorCriticPolicy):
                  pretrain_worker,
                  pretrain_path,
                  pretrain_ckpt,
+                 overfit,
+                 underfit,
                  total_steps,
                  scope=None,
                  env_name="",
@@ -343,7 +345,8 @@ class GoalConditionedPolicy(ActorCriticPolicy):
                     co_space=co_space_i,
                     buffer_size=buffer_size,
                     batch_size=batch_size,
-                    actor_lr=actor_lr,
+                    actor_lr=(actor_lr / 10.0 if (i < num_levels - 1 and underfit) or
+                                                 (i > 0 and overfit) else actor_lr),
                     critic_lr=critic_lr,
                     verbose=verbose,
                     tau=tau,

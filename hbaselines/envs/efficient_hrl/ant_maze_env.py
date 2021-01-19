@@ -102,7 +102,7 @@ class AntMazeEnv(gym.Env):
             raise AssertionError("MODEL_CLASS unspecified!")
 
         if evaluate and num_levels == 2:
-            xml_file = "ant.xml"
+            xml_file = "double_ant.xml"
         elif evaluate and num_levels == 3:
             xml_file = "triple_ant.xml"
         else:

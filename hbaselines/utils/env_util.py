@@ -206,6 +206,7 @@ ENV_ATTRIBUTES = {
                 context_range=[16, 16],
                 image_size=32,
                 evaluate=True,
+                num_levels=n_levels,
             ),
             ImageAntMaze(
                 use_contexts=True,
