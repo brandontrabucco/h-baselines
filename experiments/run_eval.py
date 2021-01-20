@@ -169,8 +169,11 @@ def main(args):
     multiagent = env_name.startswith("multiagent")
 
     print(hp.keys())
-    del hp['algorithm']
-    del hp['date/time']
+    # del hp['algorithm'] # it seems that for some envs
+    #                       this needs to be commented
+    #                       out and for others
+    #                       it need as to be present
+    # del hp['date/time']
 
     # create the algorithm object. We will be using the eval environment in
     # this object to perform the rollout.
@@ -178,7 +181,7 @@ def main(args):
         policy=policy,
         env=env_name,
         eval_env=env_name,
-        total_steps=1,
+        # total_steps=1,
         **hp
     )
 
@@ -232,6 +235,9 @@ def main(args):
                 out = None
 
             obs, total_reward = env.reset(), 0
+            policy.clear_memory(0)
+            meta_actions = [
+                None for i in range(policy.num_levels - 1)]
 
             while True:
                 context = [env.current_context] \
@@ -260,13 +266,9 @@ def main(args):
                 if hasattr(policy, "meta_action") \
                         and policy.meta_action is not None \
                         and hasattr(env, "set_goal"):
-                    goal = np.array([
-                        policy.meta_action[0][i] +
-                        (obs[policy.goal_indices]
-                         if policy.relative_goals else 0)
-                        for i in range(policy.num_levels - 1)
-                    ])
-                    env.set_goal(goal)
+
+                    for i in range(policy.num_levels - 1):
+                            meta_actions[i] = policy.meta_action[0][i]
 
                 new_obs, reward, done, info = env.step(action)
                 if not flags.no_render:
@@ -278,6 +280,17 @@ def main(args):
                                 mode='rgb_array', height=1024, width=1024))
                     else:
                         env.render()
+
+                # consume a portion of the meta action to stabilize relative  goals
+                if hasattr(policy, "meta_action") \
+                        and policy.meta_action is not None \
+                        and hasattr(env, "set_goal") \
+                        and policy.relative_goals:
+
+                    env.set_goal(np.array([meta_actions[i] + (
+                        obs[policy.goal_indices]
+                        if policy.relative_goals else 0)
+                        for i in range(policy.num_levels - 1)]))
 
                 if multiagent:
                     if (isinstance(done, dict) and done["__all__"]) \

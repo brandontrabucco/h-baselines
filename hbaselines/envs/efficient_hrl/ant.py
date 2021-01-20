@@ -233,3 +233,4 @@ class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         for i in range(num_levels):
             self.physics.data.qpos.flat[15*(i+1):15*(i+2)] = goal[i]
             self.physics.data.qpos.flat[15*(i+1) + 2] = 8
+            self.physics.data.qvel.flat[14*(i+1):] = 0.0
